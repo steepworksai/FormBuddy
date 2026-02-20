@@ -173,6 +173,7 @@ export default function SidePanel() {
           url?: string
           content?: string
           message?: string
+          text?: string
         }
       }
 
@@ -192,6 +193,11 @@ export default function SidePanel() {
 
       if (msg.type === 'QUICK_ADD' && typeof msg.payload?.content === 'string') {
         void handleSaveTextNote(msg.payload.content, true)
+        return
+      }
+
+      if (msg.type === 'SELECTION_CHANGED' && typeof msg.payload?.text === 'string') {
+        setLookupQuery(msg.payload.text)
         return
       }
 

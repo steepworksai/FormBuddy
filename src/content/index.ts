@@ -1,3 +1,8 @@
+;(() => {
+  const root = window as Window & { __FORMBUDDY_CONTENT_INIT__?: boolean }
+  if (root.__FORMBUDDY_CONTENT_INIT__) return
+  root.__FORMBUDDY_CONTENT_INIT__ = true
+
 type FieldElement = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
 
 interface FieldFocusedPayload {
@@ -12,6 +17,18 @@ let activeFieldPayload: FieldFocusedPayload | null = null
 let hoverLookupTimer: number | null = null
 let hoverSuggestionCard: HTMLDivElement | null = null
 let hoverCardCloseTimer: number | null = null
+let lastSelectionText = ''
+let currentHoverSuggestionValue = ''
+
+function safeRuntimeSendMessage(message: unknown): void {
+  try {
+    chrome.runtime.sendMessage(message)
+  } catch (err) {
+    const messageText = err instanceof Error ? err.message : String(err)
+    if (messageText.includes('Extension context invalidated')) return
+    throw err
+  }
+}
 
 function isFieldElement(target: EventTarget | null): target is FieldElement {
   return (
@@ -74,6 +91,7 @@ function clearHoverCard(): void {
   if (!hoverSuggestionCard) return
   hoverSuggestionCard.remove()
   hoverSuggestionCard = null
+  currentHoverSuggestionValue = ''
 }
 
 function cancelHoverCardClose(): void {
@@ -113,10 +131,52 @@ function sendFieldLookup(el: FieldElement): void {
   if (!payload) return
 
   activeFieldPayload = payload
-  chrome.runtime.sendMessage({
+  safeRuntimeSendMessage({
     type: 'FIELD_FOCUSED',
     payload,
   })
+}
+
+function getCurrentSelectionText(): string {
+  const active = document.activeElement
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+    const start = active.selectionStart ?? 0
+    const end = active.selectionEnd ?? 0
+    if (end > start) return active.value.slice(start, end).trim()
+  }
+  const selection = window.getSelection?.()
+  return selection?.toString().trim() ?? ''
+}
+
+function sendSelectionForSearch(): void {
+  const selected = getCurrentSelectionText()
+  if (!selected || selected.length < 2 || selected.length > 120) return
+  if (selected === lastSelectionText) return
+  lastSelectionText = selected
+  safeRuntimeSendMessage({
+    type: 'SELECTION_CHANGED',
+    payload: { text: selected },
+  })
+}
+
+async function copyText(value: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(value)
+    return
+  } catch {
+    // Fallback for environments where Clipboard API is blocked in content scripts.
+  }
+
+  const temp = document.createElement('textarea')
+  temp.value = value
+  temp.setAttribute('readonly', 'true')
+  temp.style.position = 'fixed'
+  temp.style.opacity = '0'
+  temp.style.pointerEvents = 'none'
+  document.body.appendChild(temp)
+  temp.select()
+  document.execCommand('copy')
+  temp.remove()
 }
 
 function showHoverSuggestionCard(target: FieldElement, suggestion: {
@@ -132,14 +192,16 @@ function showHoverSuggestionCard(target: FieldElement, suggestion: {
   sessionId: string
 }): void {
   clearHoverCard()
+  currentHoverSuggestionValue = suggestion.value
 
-  const rect = target.getBoundingClientRect()
   const card = document.createElement('div')
-  card.style.position = 'absolute'
+  card.style.position = 'fixed'
   card.style.zIndex = '2147483647'
-  card.style.left = `${window.scrollX + rect.left}px`
-  card.style.top = `${window.scrollY + rect.bottom + 6}px`
-  card.style.maxWidth = '320px'
+  card.style.left = '50%'
+  card.style.top = '14px'
+  card.style.transform = 'translateX(-50%)'
+  card.style.width = 'min(560px, calc(100vw - 24px))'
+  card.style.maxWidth = '560px'
   card.style.background = '#ffffff'
   card.style.border = '1px solid #d1d5db'
   card.style.borderRadius = '8px'
@@ -183,7 +245,7 @@ function showHoverSuggestionCard(target: FieldElement, suggestion: {
   fillBtn.addEventListener('click', () => {
     fillField(target, suggestion.value)
     lastFocusedEl = target
-    chrome.runtime.sendMessage({
+    safeRuntimeSendMessage({
       type: 'SUGGESTION_ACCEPTED',
       payload: suggestion,
     })
@@ -242,6 +304,14 @@ document.addEventListener('mouseout', (event) => {
   scheduleHoverCardClose()
 })
 
+document.addEventListener('mouseup', () => {
+  sendSelectionForSearch()
+})
+
+document.addEventListener('keyup', () => {
+  sendSelectionForSearch()
+})
+
 chrome.runtime.onMessage.addListener((message: unknown) => {
   const msg = message as {
     type?: string
@@ -292,10 +362,18 @@ chrome.runtime.onMessage.addListener((message: unknown) => {
 })
 
 document.addEventListener('keydown', (event) => {
+  const isSpaceKey = event.code === 'Space' || event.key === ' ' || event.key === 'Spacebar'
+  if (isSpaceKey && hoverSuggestionCard && currentHoverSuggestionValue) {
+    event.preventDefault()
+    void copyText(currentHoverSuggestionValue)
+    return
+  }
+
   const isMac = navigator.platform.toLowerCase().includes('mac')
   const modifierPressed = isMac ? event.metaKey : event.ctrlKey
   const screenshotKey = event.key.toLowerCase() === 's'
   if (!modifierPressed || !event.shiftKey || !screenshotKey) return
 
-  chrome.runtime.sendMessage({ type: 'SCREENSHOT_HOTKEY' })
+  safeRuntimeSendMessage({ type: 'SCREENSHOT_HOTKEY' })
 })
+})()

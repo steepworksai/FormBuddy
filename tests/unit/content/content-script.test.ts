@@ -16,6 +16,7 @@ document.addEventListener = ((type: string, listener: EventListenerOrEventListen
 async function setupWithHtml(html: string) {
   vi.resetModules()
   document.body.innerHTML = html
+  delete (window as Window & { __FORMBUDDY_CONTENT_INIT__?: boolean }).__FORMBUDDY_CONTENT_INIT__
 
   const sendMessageMock = vi.fn()
   const onMessageListeners: Array<(message: unknown) => void> = []
@@ -58,6 +59,7 @@ describe('TM4 content script behavior', () => {
     activeDocumentListeners = []
     vi.resetModules()
     document.body.innerHTML = ''
+    delete (window as Window & { __FORMBUDDY_CONTENT_INIT__?: boolean }).__FORMBUDDY_CONTENT_INIT__
   })
 
   it('uses aria-label before all other label sources', async () => {
@@ -178,6 +180,54 @@ describe('TM4 content script behavior', () => {
         payload: expect.objectContaining({ id: 's1', fieldId: 'passport', value: 'P9384721' }),
       })
     )
+    vi.useRealTimers()
+  })
+
+  it('sends selected text for sidepanel search', async () => {
+    const { sendMessageMock } = await setupWithHtml(`<p id="t">passport number</p>`)
+    const selectionSpy = vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => 'passport number',
+    } as unknown as Selection)
+
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'SELECTION_CHANGED',
+        payload: { text: 'passport number' },
+      })
+    )
+    selectionSpy.mockRestore()
+  })
+
+  it('copies hover suggestion value on Space key', async () => {
+    const { dispatchHover, emitRuntimeMessage } = await setupWithHtml(
+      `<input id="email" aria-label="Email Address" />`
+    )
+    const input = document.getElementById('email') as HTMLInputElement
+    const clipboardWrite = vi.fn(async () => undefined)
+    ;(globalThis.navigator as Navigator & { clipboard?: { writeText: (value: string) => Promise<void> } }).clipboard = {
+      writeText: clipboardWrite,
+    }
+
+    vi.useFakeTimers()
+    dispatchHover(input)
+    vi.advanceTimersByTime(250)
+    emitRuntimeMessage({
+      type: 'NEW_SUGGESTION',
+      payload: {
+        id: 's2',
+        fieldId: 'email',
+        fieldLabel: 'Email Address',
+        value: 'venkatesh.poosarla@example.com',
+        sourceFile: 'profile.pdf',
+        confidence: 'high',
+        sessionId: 'sess-2',
+      },
+    })
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    expect(clipboardWrite).toHaveBeenCalledWith('venkatesh.poosarla@example.com')
     vi.useRealTimers()
   })
 })

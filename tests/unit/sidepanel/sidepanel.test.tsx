@@ -204,4 +204,23 @@ describe('TM6 sidepanel component', () => {
       expect(screen.queryByText(/No API key set/i)).not.toBeInTheDocument()
     })
   })
+
+  it('updates search box from selection message', async () => {
+    const chromeMock = installChromeMock()
+    const { default: SidePanel } = await import('../../../src/sidepanel/SidePanel')
+    render(<SidePanel />)
+
+    await waitFor(() => {
+      expect(chromeMock.runtimeMessageListener).toBeDefined()
+    })
+
+    chromeMock.runtimeMessageListener?.({
+      type: 'SELECTION_CHANGED',
+      payload: { text: 'email address' },
+    })
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/search field/i)).toHaveValue('email address')
+    })
+  })
 })
