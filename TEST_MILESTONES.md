@@ -446,10 +446,10 @@ Do not move to the next milestone until the current one is green.
 
 ## Progress Checklist
 
-- [ ] TM1 complete
-- [ ] TM2 complete
-- [ ] TM3 complete
-- [ ] TM4 complete
+- [x] TM1 complete
+- [x] TM2 complete
+- [x] TM3 complete
+- [x] TM4 complete
 - [ ] TM5 complete
 - [ ] TM6 complete
 - [ ] TM7 complete
@@ -458,4 +458,3 @@ Do not move to the next milestone until the current one is green.
 - [ ] TM10 complete
 - [ ] TM11 complete
 - [ ] TM12 complete
-
