@@ -450,8 +450,8 @@ Do not move to the next milestone until the current one is green.
 - [x] TM2 complete
 - [x] TM3 complete
 - [x] TM4 complete
-- [ ] TM5 complete
-- [ ] TM6 complete
+- [x] TM5 complete
+- [x] TM6 complete
 - [ ] TM7 complete
 - [ ] TM8 complete
 - [ ] TM9 complete
