@@ -16,13 +16,29 @@ export async function verifyApiKey(config: LLMConfig): Promise<boolean> {
         max_tokens: 5,
         messages: [{ role: 'user', content: 'hi' }],
       })
-    } else {
+    } else if (config.provider === 'openai') {
       const client = new OpenAI({ apiKey: config.apiKey, dangerouslyAllowBrowser: true })
       await client.chat.completions.create({
         model: config.model,
         max_tokens: 5,
         messages: [{ role: 'user', content: 'hi' }],
       })
+    } else {
+      const endpoint =
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent` +
+        `?key=${encodeURIComponent(config.apiKey)}`
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+          generationConfig: { maxOutputTokens: 5 },
+        }),
+      })
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Gemini verify failed (${response.status}): ${errorText}`)
+      }
     }
     return true
   } catch (err) {
@@ -35,7 +51,9 @@ export async function verifyApiKey(config: LLMConfig): Promise<boolean> {
         msg.includes('invalid') ||
         msg.includes('authentication') ||
         msg.includes('api key') ||
-        msg.includes('not found')
+        msg.includes('not found') ||
+        msg.includes('permission denied') ||
+        msg.includes('unauthorized')
       ) {
         return false
       }

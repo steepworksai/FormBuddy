@@ -1,5 +1,6 @@
 import type { LLMConfig } from '../../types'
 import { callClaude } from './claude'
+import { callGemini } from './gemini'
 import { callOpenAI } from './openai'
 
 export async function callLLM(
@@ -10,5 +11,8 @@ export async function callLLM(
   if (config.provider === 'anthropic') {
     return callClaude(systemPrompt, userMessage, config)
   }
-  return callOpenAI(systemPrompt, userMessage, config)
+  if (config.provider === 'openai') {
+    return callOpenAI(systemPrompt, userMessage, config)
+  }
+  return callGemini(systemPrompt, userMessage, config)
 }

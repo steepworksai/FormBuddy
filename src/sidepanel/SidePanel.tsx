@@ -548,7 +548,10 @@ export default function SidePanel() {
 
       {/* Title bar */}
       <div style={styles.titleRow}>
-        <h1 style={styles.title}>FormBuddy</h1>
+        <div>
+          <h1 style={styles.title}>FormBuddy</h1>
+          <p style={styles.subtitle}>Form assistant for this page</p>
+        </div>
         <div style={styles.iconRow}>
           {hasFolder && (
             <button
@@ -560,17 +563,23 @@ export default function SidePanel() {
               {screenshotStatus === 'indexing' ? '⏳' : '📸'}
             </button>
           )}
+          <button
+            style={styles.iconBtn}
+            onClick={openSettings}
+            title="Settings"
+          >
+            ⚙️
+          </button>
           {hasFolder && (
             <button
               style={styles.iconBtn}
               onClick={handleRefresh}
               disabled={busy}
-              title="Refresh — re-read API key and re-index folder"
+              title="Reload everything"
             >
-              {busy ? '⏳' : refreshed ? '✓' : '🔄'}
+              {busy ? '⏳' : refreshed ? '✓' : '↻'}
             </button>
           )}
-          <button style={styles.iconBtn} onClick={openSettings} title="Settings">⚙️</button>
         </div>
       </div>
 
@@ -581,14 +590,6 @@ export default function SidePanel() {
         disabled={busy}
       >
         {busy ? 'Working…' : hasFolder ? '↺ Change Folder' : '📂 Choose Folder'}
-      </button>
-      <button
-        style={{ ...styles.secondaryButton, opacity: busy ? 0.7 : 1 }}
-        onClick={handleRefresh}
-        disabled={busy}
-        title="Reload API key, files, and indexing context"
-      >
-        ↻ Reload Everything
       </button>
 
       {hasFolder && (
@@ -647,17 +648,17 @@ export default function SidePanel() {
       )}
 
       {hasFolder && files.length === 0 && !busy && (
-        <p style={styles.empty}>No supported files found in this folder.</p>
+        <p style={styles.empty}>No supported files in this folder yet.</p>
       )}
 
       {hasFolder && (
-        <div style={styles.suggestionSection}>
-          <h2 style={styles.feedTitle}>Quick Text Note (Milestone 11)</h2>
+        <div style={styles.panelCard}>
+          <h2 style={styles.sectionTitle}>Quick Note</h2>
           <textarea
             style={styles.noteInput}
             value={quickNote}
             onChange={(e) => setQuickNote(e.target.value)}
-            placeholder="Type a quick note (for example: My loyalty number is ABC-123-XYZ)"
+            placeholder="Add a note, number, or detail you want FormBuddy to use."
           />
           <button style={styles.noteSaveBtn} onClick={() => void handleSaveTextNote()}>
             Save Note
@@ -665,25 +666,25 @@ export default function SidePanel() {
         </div>
       )}
 
-      <div style={styles.feedSection}>
-        <h2 style={styles.feedTitle}>Detected Fields (Milestone 6)</h2>
+      <div style={styles.panelCard}>
+        <h2 style={styles.sectionTitle}>Field Activity</h2>
         {detectedFields.length === 0 ? (
-          <p style={styles.feedEmpty}>Focus any form field to see live detection.</p>
+          <p style={styles.feedEmpty}>Click into a form field to start detection.</p>
         ) : (
           <ul style={styles.feedList}>
             {detectedFields.map(item => (
               <li key={`${item.id}-${item.at}`} style={styles.feedItem}>
-                Detected: {item.label}
+                {item.label}
               </li>
             ))}
           </ul>
         )}
       </div>
 
-      <div style={styles.suggestionSection}>
-        <h2 style={styles.feedTitle}>Suggestions (Milestone 7)</h2>
+      <div style={styles.panelCard}>
+        <h2 style={styles.sectionTitle}>Suggestions</h2>
         {suggestions.length === 0 ? (
-          <p style={styles.feedEmpty}>Focus a field to generate suggestions from indexed documents.</p>
+          <p style={styles.feedEmpty}>Suggestions will appear when a field matches your indexed documents.</p>
         ) : (
           <ul style={styles.feedList}>
             {suggestions.map(item => (
@@ -707,15 +708,15 @@ export default function SidePanel() {
         )}
       </div>
 
-      <div style={styles.suggestionSection}>
-        <h2 style={styles.feedTitle}>Used Suggestions (Milestone 8)</h2>
+      <div style={styles.panelCard}>
+        <h2 style={styles.sectionTitle}>Filled This Session</h2>
         {usedLog.length === 0 ? (
-          <p style={styles.feedEmpty}>Accepted suggestions appear here.</p>
+          <p style={styles.feedEmpty}>Accepted suggestions will be tracked here.</p>
         ) : (
           <ul style={styles.feedList}>
             {usedLog.map((item, idx) => (
               <li key={`${item.usedAt}-${idx}`} style={styles.feedItem}>
-                Used: {item.fieldLabel} → {item.value}
+                {item.fieldLabel} {'->'} {item.value}
               </li>
             ))}
           </ul>
@@ -739,6 +740,11 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '12px',
   },
   title:   { fontSize: '18px', fontWeight: 700, margin: 0 },
+  subtitle: {
+    margin: '2px 0 0',
+    fontSize: '11px',
+    color: '#6b7280',
+  },
   iconRow: { display: 'flex', gap: '4px' },
   iconBtn: {
     background: 'none',
@@ -756,18 +762,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#1a73e8',
     color: '#fff',
     border: 'none',
-    borderRadius: '6px',
-    cursor: 'pointer',
-  },
-  secondaryButton: {
-    width: '100%',
-    padding: '8px 12px',
-    marginTop: '8px',
-    fontSize: '13px',
-    fontWeight: 600,
-    background: '#f3f4f6',
-    color: '#111827',
-    border: '1px solid #d1d5db',
     borderRadius: '6px',
     cursor: 'pointer',
   },
@@ -848,15 +842,17 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
   },
   subtext: { fontSize: '11px', color: '#888', marginTop: '1px' },
-  feedSection: {
+  panelCard: {
     marginTop: '14px',
-    borderTop: '1px solid #ececec',
-    paddingTop: '10px',
+    border: '1px solid #e5e7eb',
+    background: '#fbfdff',
+    borderRadius: '8px',
+    padding: '10px',
   },
-  feedTitle: {
+  sectionTitle: {
     margin: 0,
-    fontSize: '12px',
-    color: '#444',
+    fontSize: '13px',
+    color: '#1f2937',
     fontWeight: 700,
   },
   feedEmpty: {
@@ -878,11 +874,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     padding: '6px 8px',
     marginBottom: '6px',
-  },
-  suggestionSection: {
-    marginTop: '14px',
-    borderTop: '1px solid #ececec',
-    paddingTop: '10px',
   },
   suggestionItem: {
     background: '#f8fafc',

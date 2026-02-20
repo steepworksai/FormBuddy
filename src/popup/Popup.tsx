@@ -15,6 +15,12 @@ const PROVIDERS: { value: LLMProvider; label: string; models: string[]; url: str
     models: ['gpt-4o', 'gpt-4o-mini'],
     url: 'https://platform.openai.com',
   },
+  {
+    value: 'gemini',
+    label: 'Google Gemini',
+    models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro'],
+    url: 'https://aistudio.google.com/app/apikey',
+  },
 ]
 
 type Status = 'idle' | 'verifying' | 'connected' | 'invalid' | 'error'

@@ -30,7 +30,7 @@ export interface Session {
   pageHistory: string[];
 }
 
-export type LLMProvider = 'anthropic' | 'openai';
+export type LLMProvider = 'anthropic' | 'openai' | 'gemini';
 
 export interface LLMConfig {
   provider: LLMProvider;
