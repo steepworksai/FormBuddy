@@ -184,6 +184,23 @@ export default function SidePanel() {
     return () => chrome.runtime.onMessage.removeListener(onMessage)
   }, [])
 
+  useEffect(() => {
+    // Keep key warning state in sync even if the key is updated in popup.
+    const onStorageChanged = (
+      changes: { [key: string]: chrome.storage.StorageChange },
+      areaName: string
+    ) => {
+      if (areaName !== 'local') return
+      if (!changes.llmConfig) return
+      const nextValue = changes.llmConfig.newValue as LLMConfig | undefined
+      setNoLLM(!nextValue?.apiKey)
+      if (nextValue?.apiKey) setError(null)
+    }
+
+    chrome.storage.onChanged.addListener(onStorageChanged)
+    return () => chrome.storage.onChanged.removeListener(onStorageChanged)
+  }, [])
+
   function patchFile(name: string, patch: Partial<FileEntry>) {
     setFiles(prev => prev.map(f => f.name === name ? { ...f, ...patch } : f))
   }
@@ -271,9 +288,8 @@ export default function SidePanel() {
 
   async function handleRefresh() {
     const dirHandle = dirHandleRef.current
-    const rawFiles  = rawFilesRef.current
 
-    if (!dirHandle || rawFiles.length === 0) {
+    if (!dirHandle) {
       // No folder selected yet — just re-check the key status
       const llmConfig = await loadLLMConfig()
       setNoLLM(!llmConfig?.apiKey)
@@ -284,16 +300,25 @@ export default function SidePanel() {
     setRefreshed(false)
     setBusy(true)
 
-    const llmConfig = await loadLLMConfig()
-    setNoLLM(!llmConfig?.apiKey)
+    try {
+      const llmConfig = await loadLLMConfig()
+      setNoLLM(!llmConfig?.apiKey)
 
-    // Force re-index so the LLM step runs on files that were indexed without a key
-    await markAllForReindex(dirHandle)
+      // Re-scan folder so refresh truly reloads current disk state.
+      const latestFiles = await listFiles(dirHandle)
+      rawFilesRef.current = latestFiles
 
-    setBusy(false)
-    await runIndexing(rawFiles, dirHandle, llmConfig)
-    setRefreshed(true)
-    setTimeout(() => setRefreshed(false), 3000)
+      // Force re-index so LLM/entity extraction reruns with latest key.
+      await markAllForReindex(dirHandle)
+      await runIndexing(latestFiles, dirHandle, llmConfig)
+
+      setRefreshed(true)
+      setTimeout(() => setRefreshed(false), 3000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Refresh failed. Please try again.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   function fileSubtext(f: FileEntry): string {
@@ -557,6 +582,14 @@ export default function SidePanel() {
       >
         {busy ? 'Working…' : hasFolder ? '↺ Change Folder' : '📂 Choose Folder'}
       </button>
+      <button
+        style={{ ...styles.secondaryButton, opacity: busy ? 0.7 : 1 }}
+        onClick={handleRefresh}
+        disabled={busy}
+        title="Reload API key, files, and indexing context"
+      >
+        ↻ Reload Everything
+      </button>
 
       {hasFolder && (
         <div
@@ -723,6 +756,18 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#1a73e8',
     color: '#fff',
     border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+  },
+  secondaryButton: {
+    width: '100%',
+    padding: '8px 12px',
+    marginTop: '8px',
+    fontSize: '13px',
+    fontWeight: 600,
+    background: '#f3f4f6',
+    color: '#111827',
+    border: '1px solid #d1d5db',
     borderRadius: '6px',
     cursor: 'pointer',
   },
