@@ -6,7 +6,7 @@ import type {
   FormKVCacheFile,
 } from '../../types'
 
-const INDEXING_DIR = '.indexing'
+const INDEXING_DIR = 'FormBuddy'
 const MANIFEST_FILE = 'manifest.json'
 const FORM_KV_DIR = 'form-kv'
 
@@ -125,6 +125,17 @@ export async function writeFormKVCacheEntry(
   const writable = await fileHandle.createWritable()
   await writable.write(JSON.stringify(entry, null, 2))
   await writable.close()
+}
+
+export async function clearFormKVCache(
+  dirHandle: FileSystemDirectoryHandle
+): Promise<void> {
+  try {
+    const indexingDir = await getIndexingDir(dirHandle)
+    await indexingDir.removeEntry(FORM_KV_DIR, { recursive: true })
+  } catch {
+    // Directory may not exist yet — nothing to clear
+  }
 }
 
 export function buildManifestEntry(

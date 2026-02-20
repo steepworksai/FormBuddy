@@ -49,6 +49,13 @@ function normalize(text: string | null | undefined): string {
   return (text ?? '').trim().replace(/\s+/g, ' ')
 }
 
+function labelTextOnly(labelEl: Element): string {
+  // Clone and strip nested form controls so their text/options don't bleed in
+  const clone = labelEl.cloneNode(true) as Element
+  clone.querySelectorAll('input, textarea, select, button').forEach(child => child.remove())
+  return normalize(clone.textContent)
+}
+
 function getFieldLabel(el: FieldElement): string {
   const ariaLabel = normalize(el.getAttribute('aria-label'))
   if (ariaLabel) return ariaLabel
@@ -56,7 +63,7 @@ function getFieldLabel(el: FieldElement): string {
   if (el.id) {
     const linkedLabel = document.querySelector(`label[for="${CSS.escape(el.id)}"]`)
     if (linkedLabel instanceof HTMLLabelElement) {
-      const labelText = normalize(linkedLabel.textContent)
+      const labelText = labelTextOnly(linkedLabel)
       if (labelText) return labelText
     }
   }
@@ -68,7 +75,7 @@ function getFieldLabel(el: FieldElement): string {
 
   const parentLabel = el.closest('label')
   if (parentLabel) {
-    const text = normalize(parentLabel.textContent)
+    const text = labelTextOnly(parentLabel)
     if (text) return text
   }
 
@@ -120,25 +127,6 @@ function scheduleHoverCardClose(delayMs = 180): void {
   }, delayMs)
 }
 
-function fillField(el: FieldElement, value: string): void {
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    el.value = value
-    el.dispatchEvent(new Event('input', { bubbles: true }))
-    el.dispatchEvent(new Event('change', { bubbles: true }))
-    return
-  }
-
-  if (el instanceof HTMLSelectElement) {
-    const matching = Array.from(el.options).find(
-      option => option.value === value || option.text === value
-    )
-    if (!matching) return
-    el.value = matching.value
-    el.dispatchEvent(new Event('input', { bubbles: true }))
-    el.dispatchEvent(new Event('change', { bubbles: true }))
-  }
-}
-
 function sendFieldLookup(el: FieldElement): void {
   const payload = buildPayload(el)
   if (!payload) return
@@ -163,10 +151,16 @@ function buildFormSchemaSnapshot(): FormSchemaSnapshot | null {
       humanizeIdentifier(element.id) ||
       ('placeholder' in element ? humanizeIdentifier((element as HTMLInputElement | HTMLTextAreaElement).placeholder) : '') ||
       'Field'
-    const fieldLabel =
-      primaryLabel && fallbackLabel && primaryLabel.toLowerCase() !== fallbackLabel.toLowerCase()
-        ? `${primaryLabel} (${fallbackLabel})`
-        : (primaryLabel || fallbackLabel)
+    const primaryLower = primaryLabel.toLowerCase()
+    const fallbackLower = fallbackLabel.toLowerCase()
+    const fallbackAddsInfo =
+      primaryLabel &&
+      fallbackLabel &&
+      fallbackLower !== primaryLower &&
+      !primaryLower.includes(fallbackLower)
+    const fieldLabel = fallbackAddsInfo
+      ? `${primaryLabel} (${fallbackLabel})`
+      : (primaryLabel || fallbackLabel)
     const fieldId = getFieldId(element, fieldLabel)
     const payload: FieldFocusedPayload = {
       fieldId,
@@ -226,6 +220,42 @@ function sendSelectionForSearch(): void {
   })
 }
 
+function normalizeForMatch(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function labelSimilarity(a: string, b: string): number {
+  const na = normalizeForMatch(a)
+  const nb = normalizeForMatch(b)
+  if (!na || !nb) return 0
+  if (na === nb) return 1
+  if (na.includes(nb) || nb.includes(na)) return 0.85
+  const wordsA = na.split(' ').filter(Boolean)
+  const wordsB = new Set(nb.split(' ').filter(Boolean))
+  const shared = wordsA.filter(w => wordsB.has(w)).length
+  const union = new Set([...wordsA, ...wordsB]).size
+  return union > 0 ? shared / union : 0
+}
+
+function fillField(el: FieldElement, value: string): boolean {
+  if (el instanceof HTMLSelectElement) {
+    const lower = value.toLowerCase()
+    const option = Array.from(el.options).find(
+      o => o.text.toLowerCase() === lower ||
+           o.value.toLowerCase() === lower ||
+           o.text.toLowerCase().includes(lower) ||
+           lower.includes(o.text.toLowerCase().trim())
+    )
+    if (!option) return false
+    el.value = option.value
+  } else {
+    (el as HTMLInputElement | HTMLTextAreaElement).value = value
+  }
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return true
+}
+
 async function copyText(value: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(value)
@@ -246,7 +276,7 @@ async function copyText(value: string): Promise<void> {
   temp.remove()
 }
 
-function showHoverSuggestionCard(target: FieldElement, suggestion: {
+function showHoverSuggestionCard(_target: FieldElement, suggestion: {
   id: string
   fieldId: string
   fieldLabel: string
@@ -301,17 +331,16 @@ function showHoverSuggestionCard(target: FieldElement, suggestion: {
   row.style.display = 'flex'
   row.style.gap = '6px'
 
-  const fillBtn = document.createElement('button')
-  fillBtn.textContent = 'Fill'
-  fillBtn.style.border = 'none'
-  fillBtn.style.borderRadius = '5px'
-  fillBtn.style.padding = '5px 10px'
-  fillBtn.style.background = '#2563eb'
-  fillBtn.style.color = '#ffffff'
-  fillBtn.style.cursor = 'pointer'
-  fillBtn.addEventListener('click', () => {
-    fillField(target, suggestion.value)
-    lastFocusedEl = target
+  const copyBtn = document.createElement('button')
+  copyBtn.textContent = 'Copy'
+  copyBtn.style.border = 'none'
+  copyBtn.style.borderRadius = '5px'
+  copyBtn.style.padding = '5px 10px'
+  copyBtn.style.background = '#2563eb'
+  copyBtn.style.color = '#ffffff'
+  copyBtn.style.cursor = 'pointer'
+  copyBtn.addEventListener('click', () => {
+    void copyText(suggestion.value)
     safeRuntimeSendMessage({
       type: 'SUGGESTION_ACCEPTED',
       payload: suggestion,
@@ -329,7 +358,7 @@ function showHoverSuggestionCard(target: FieldElement, suggestion: {
   closeBtn.style.cursor = 'pointer'
   closeBtn.addEventListener('click', clearHoverCard)
 
-  row.append(fillBtn, closeBtn)
+  row.append(copyBtn, closeBtn)
   card.append(title, value, meta, row)
   document.body.appendChild(card)
   hoverSuggestionCard = card
@@ -400,13 +429,48 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
       reason?: string
       confidence?: 'high' | 'medium' | 'low'
       sessionId?: string
+      mappings?: Array<{ fieldLabel: string; value: string }>
     }
   }
 
-  if (msg.type === 'AUTOFILL_FIELD') {
-    if (!lastFocusedEl) return
-    fillField(lastFocusedEl, msg.payload?.value ?? '')
-    return
+  if (msg.type === 'BULK_AUTOFILL') {
+    const mappings = msg.payload?.mappings ?? []
+    const elements = Array.from(document.querySelectorAll('input, textarea, select'))
+      .filter((el): el is FieldElement => isFieldElement(el))
+      .filter(el => {
+        if (el instanceof HTMLInputElement) {
+          const t = el.type.toLowerCase()
+          return t !== 'hidden' && t !== 'submit' && t !== 'button' && t !== 'reset' && t !== 'image'
+        }
+        return true
+      })
+
+    let filled = 0
+    const skipped: string[] = []
+
+    for (const mapping of mappings) {
+      let bestEl: FieldElement | null = null
+      let bestScore = 0.35 // minimum threshold to avoid false matches
+
+      for (const el of elements) {
+        const label = getFieldLabel(el)
+        if (!label) continue
+        const score = labelSimilarity(label, mapping.fieldLabel)
+        if (score > bestScore) {
+          bestScore = score
+          bestEl = el
+        }
+      }
+
+      if (bestEl && fillField(bestEl, mapping.value)) {
+        filled++
+      } else {
+        skipped.push(mapping.fieldLabel)
+      }
+    }
+
+    sendResponse({ ok: true, filled, total: mappings.length, skipped })
+    return true
   }
 
   if (msg.type === 'REQUEST_FORM_SCHEMA') {

@@ -55,7 +55,7 @@ export default defineConfig({
     crx({ manifest }),
   ],
   build: {
-    // PDF.js and Tesseract.js are large — expected for an extension
+    // PDF.js worker is large — expected for an extension
     chunkSizeWarningLimit: 1500,
   },
 })

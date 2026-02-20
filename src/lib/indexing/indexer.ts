@@ -14,6 +14,7 @@ import { extractEntitiesWithLLM } from '../llm/extractor'
 import { organizeFieldsWithLLM } from '../llm/fieldOrganizer'
 import { buildSearchIndexWithLLM } from '../llm/searchIndex'
 import { extractFieldsFromRawText } from './fieldExtract'
+import { buildLocalSearchIndex, mergeSearchIndexes } from './autofill'
 import { getTypeInfo } from '../config/supportedTypes'
 import type { DocumentIndex, FieldEntry, LLMConfig, PageEntry, SearchIndexFile } from '../../types'
 
@@ -168,7 +169,7 @@ export async function indexDocument(
 
   let entities: Record<string, string[]> = {}
   let summary = ''
-  let searchIndex: SearchIndexFile | undefined = previousSearchIndex ?? undefined
+  let searchIndex: SearchIndexFile | undefined = undefined
 
   let llmPreparedThisRun = false
   if (llmConfig?.apiKey && !llmAlreadyPrepared) {
@@ -194,18 +195,21 @@ export async function indexDocument(
     }
   }
 
+  const localSearchIndex = buildLocalSearchIndex({ pages, entities })
+  searchIndex = localSearchIndex
+
   if (llmConfig?.apiKey) {
     try {
       const allFields = pages.flatMap(page => page.fields)
       const fullText = pages.map(p => p.rawText).join('\n')
       const generatedSearchIndex = await buildSearchIndexWithLLM(fullText, allFields, file.name, llmConfig)
-      if (generatedSearchIndex.items.length > 0 || Object.keys(generatedSearchIndex.autofill ?? {}).length > 0) {
-        searchIndex = generatedSearchIndex
-      }
+      searchIndex = mergeSearchIndexes(localSearchIndex, generatedSearchIndex)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.warn(`[FormBuddy] Search index generation failed for ${file.name}:`, message)
     }
+  } else if (previousSearchIndex) {
+    searchIndex = mergeSearchIndexes(localSearchIndex, previousSearchIndex)
   }
 
   // ── Phase 4: Write ────────────────────────────────────────

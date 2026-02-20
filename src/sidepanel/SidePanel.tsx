@@ -3,6 +3,7 @@ import { requestFolderAccess, listFiles } from '../lib/folder/access'
 import { writeFileToFolder } from '../lib/folder/access'
 import { indexDocument } from '../lib/indexing/indexer'
 import {
+  clearFormKVCache,
   readFormKVCacheEntry,
   readIndexEntry,
   readManifest,
@@ -189,6 +190,9 @@ export default function SidePanel() {
   const [manualFetchBusy, setManualFetchBusy] = useState(false)
   const [manualFieldResults, setManualFieldResults] = useState<ManualFieldResult[]>([])
   const [manualCopiedId, setManualCopiedId] = useState<string | null>(null)
+  const [autoFillBusy, setAutoFillBusy] = useState(false)
+  const [autoFillStatus, setAutoFillStatus] = useState<string | null>(null)
+  const [cacheCleared, setCacheCleared] = useState(false)
 
   // Persist between renders without triggering re-renders
   const dirHandleRef       = useRef<FileSystemDirectoryHandle | null>(null)
@@ -234,6 +238,10 @@ export default function SidePanel() {
       }
 
       if (msg.type === 'PAGE_NAVIGATED' && msg.payload?.url) {
+        // Every navigation is a potentially different form — clear previous results
+        setFieldsToFetch('')
+        setManualFieldResults([])
+        setAutoFillStatus(null)
         setNavInfo({
           pageIndex: msg.payload.pageIndex ?? 1,
           domain: msg.payload.domain ?? '',
@@ -371,9 +379,14 @@ export default function SidePanel() {
     }
     setIndexedDocs(documents)
 
-    chrome.runtime.sendMessage({
+    const ack = await chrome.runtime.sendMessage({
       type: 'CONTEXT_UPDATED',
       payload: { documents },
+    })
+    console.log('[FormBuddy][FormKV] Context sync completed', {
+      selectedFiles: filter.size,
+      documentsLoaded: documents.length,
+      ack,
     })
 
     return documents
@@ -757,12 +770,15 @@ export default function SidePanel() {
 
   async function handleManualFieldFetch(): Promise<void> {
     const fields = parseRequestedFields(fieldsToFetch)
+    console.log('[FormBuddy][SP] handleManualFieldFetch fired', { fieldCount: fields.length, fields })
+
     if (!fields.length) {
       setError('Paste one or more field names to fetch.')
       return
     }
     const dirHandle = dirHandleRef.current
     if (!dirHandle) {
+      console.warn('[FormBuddy][SP] No folder selected — aborting fetch')
       setError('Choose a folder first.')
       return
     }
@@ -770,16 +786,27 @@ export default function SidePanel() {
     setManualFetchBusy(true)
     setError(null)
     try {
+      console.log('[FormBuddy][SP] Syncing context to background…', {
+        activeFilter: selectedFilesRef.current.size,
+        filteredTo: [...selectedFilesRef.current],
+      })
       const syncedDocs = await syncContextToBackground(dirHandle)
+      console.log('[FormBuddy][SP] Context synced', {
+        documentCount: syncedDocs.length,
+        documents: syncedDocs.map(d => d.fileName),
+      })
+
       if (!syncedDocs.length) {
+        console.warn('[FormBuddy][SP] No documents in context — fetch aborted')
         setError('No indexed documents are selected.')
         setManualFieldResults([])
         return
       }
 
+      console.log('[FormBuddy][SP] Sending MANUAL_FIELD_FETCH', { fields, rawInput: fieldsToFetch })
       const response = await chrome.runtime.sendMessage({
         type: 'MANUAL_FIELD_FETCH',
-        payload: { fields },
+        payload: { fields, rawInput: fieldsToFetch },
       }) as {
         ok?: boolean
         message?: string
@@ -791,7 +818,10 @@ export default function SidePanel() {
           sourcePage?: number
         }>
       } | undefined
+      console.log('[FormBuddy][SP] MANUAL_FIELD_FETCH response', response)
+
       if (!response?.ok) {
+        console.warn('[FormBuddy][SP] Response not ok', { message: response?.message, reason: response?.reason })
         setError(response?.message || 'Could not fetch fields from selected docs.')
         setManualFieldResults([])
         return
@@ -803,14 +833,62 @@ export default function SidePanel() {
         sourceFile: item.sourceFile,
         sourcePage: item.sourcePage,
       }))
+      console.log('[FormBuddy][SP] Parsed results', { count: results.length, results })
       setManualFieldResults(results)
       if (!results.length) {
+        console.warn('[FormBuddy][SP] No results returned', { reason: response.reason })
         setError(response.reason || 'No matching values found for the requested fields.')
       }
     } catch (err) {
+      console.error('[FormBuddy][SP] handleManualFieldFetch threw', err)
       setError(getErrorMessage(err, 'Failed to fetch fields from docs.'))
     } finally {
       setManualFetchBusy(false)
+    }
+  }
+
+  async function handlePullPageFields(): Promise<void> {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_PAGE_FIELDS' }) as
+      | { ok: boolean; fields: Array<{ fieldLabel: string }>; reason?: string }
+      | undefined
+    const labels = (response?.fields ?? [])
+      .map(f => f.fieldLabel.trim())
+      .filter(Boolean)
+    if (labels.length) {
+      setFieldsToFetch(labels.join('\n'))
+    }
+  }
+
+  async function handleClearCache(): Promise<void> {
+    const dirHandle = dirHandleRef.current
+    if (!dirHandle) return
+    await clearFormKVCache(dirHandle)
+    setCacheCleared(true)
+    setTimeout(() => setCacheCleared(false), 2500)
+  }
+
+  async function handleAutoFill(): Promise<void> {
+    if (!manualFieldResults.length) return
+    setAutoFillBusy(true)
+    setAutoFillStatus(null)
+    try {
+      const mappings = manualFieldResults.map(r => ({ fieldLabel: r.fieldLabel, value: r.value }))
+      const response = await chrome.runtime.sendMessage({
+        type: 'BULK_AUTOFILL',
+        payload: { mappings },
+      }) as { ok: boolean; filled?: number; total?: number; skipped?: string[]; reason?: string } | undefined
+
+      if (response?.ok) {
+        const { filled = 0, total = mappings.length } = response
+        setAutoFillStatus(`Filled ${filled} of ${total} field${total !== 1 ? 's' : ''}`)
+      } else {
+        setAutoFillStatus(response?.reason ?? 'Auto fill failed.')
+      }
+    } catch (err) {
+      setAutoFillStatus(err instanceof Error ? err.message : 'Auto fill failed.')
+    } finally {
+      setAutoFillBusy(false)
+      setTimeout(() => setAutoFillStatus(null), 4000)
     }
   }
 
@@ -851,6 +929,15 @@ export default function SidePanel() {
           >
             ⚙️
           </button>
+          {hasFolder && (
+            <button
+              style={styles.iconBtn}
+              onClick={() => void handleClearCache()}
+              title="Clear field cache"
+            >
+              {cacheCleared ? '✓' : '🗑️'}
+            </button>
+          )}
           {hasFolder && (
             <button
               style={styles.iconBtn}
@@ -948,7 +1035,16 @@ export default function SidePanel() {
 
       {hasFolder && (
         <div style={styles.panelCard}>
-          <h2 style={styles.sectionTitle}>Fields From Doc</h2>
+          <div style={styles.sectionTitleRow}>
+            <h2 style={styles.sectionTitle}>Fill From My Docs</h2>
+            <button
+              style={styles.pullBtn}
+              onClick={() => void handlePullPageFields()}
+              title="Pull field labels from the current page"
+            >
+              Scan Form
+            </button>
+          </div>
           <textarea
             style={styles.noteInput}
             value={fieldsToFetch}
@@ -960,23 +1056,37 @@ export default function SidePanel() {
             onClick={() => void handleManualFieldFetch()}
             disabled={!hasFolder || manualFetchBusy}
           >
-            {manualFetchBusy ? 'Fetching...' : 'Fetch Fields From Doc'}
+            {manualFetchBusy ? 'Fetching...' : 'Find My Values'}
           </button>
           {manualFieldResults.length > 0 && (
-            <ul style={styles.feedList}>
-              {manualFieldResults.map(item => (
-                <li key={item.id} style={styles.lookupItem}>
-                  <p style={styles.lookupLabel}>{item.fieldLabel}</p>
-                  <p style={styles.lookupValue}>{item.value}</p>
-                  <p style={styles.lookupSource}>
-                    From: {item.sourceFile}{item.sourcePage ? `, Page ${item.sourcePage}` : ''}
-                  </p>
-                  <button style={styles.copyBtn} onClick={() => void copyManualFieldValue(item)}>
-                    {manualCopiedId === item.id ? 'Copied' : 'Copy'}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <>
+              <div style={styles.autoFillRow}>
+                <button
+                  style={styles.autoFillBtn}
+                  onClick={() => void handleAutoFill()}
+                  disabled={autoFillBusy}
+                >
+                  {autoFillBusy ? 'Filling...' : `Auto Fill (${manualFieldResults.length} fields)`}
+                </button>
+                {autoFillStatus && (
+                  <span style={styles.autoFillStatus}>{autoFillStatus}</span>
+                )}
+              </div>
+              <ul style={styles.feedList}>
+                {manualFieldResults.map(item => (
+                  <li key={item.id} style={styles.lookupItem}>
+                    <p style={styles.lookupLabel}>{item.fieldLabel}</p>
+                    <p style={styles.lookupValue}>{item.value}</p>
+                    <p style={styles.lookupSource}>
+                      From: {item.sourceFile}{item.sourcePage ? `, Page ${item.sourcePage}` : ''}
+                    </p>
+                    <button style={styles.copyBtn} onClick={() => void copyManualFieldValue(item)}>
+                      {manualCopiedId === item.id ? 'Copied' : 'Copy'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       )}
@@ -1183,12 +1293,49 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     padding: 0,
   },
+  autoFillRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginTop: '8px',
+    marginBottom: '4px',
+  },
+  autoFillBtn: {
+    background: '#1a73e8',
+    border: 'none',
+    borderRadius: '6px',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 600,
+    padding: '6px 12px',
+  },
+  autoFillStatus: {
+    fontSize: '12px',
+    color: '#374151',
+  },
   panelCard: {
     marginTop: '14px',
     border: '1px solid #e5e7eb',
     background: '#fbfdff',
     borderRadius: '8px',
     padding: '10px',
+  },
+  sectionTitleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: '6px',
+  },
+  pullBtn: {
+    background: 'none',
+    border: '1px solid #d1d5db',
+    borderRadius: '5px',
+    color: '#374151',
+    cursor: 'pointer',
+    fontSize: '11px',
+    fontWeight: 600,
+    padding: '3px 8px',
   },
   sectionTitle: {
     margin: 0,

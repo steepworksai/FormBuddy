@@ -190,13 +190,11 @@ describe('TM5 background workflow', () => {
     )
     await flushAsync()
 
-    expect(chromeState.tabsSendMessage).toHaveBeenCalledWith(
-      99,
-      expect.objectContaining({
-        type: 'AUTOFILL_FIELD',
-        payload: { value: 'AB123456' },
-      })
-    )
+    expect(
+      chromeState.tabsSendMessage.mock.calls.some(
+        call => call[1]?.type === 'AUTOFILL_FIELD'
+      )
+    ).toBe(false)
     expect(chromeState.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'SUGGESTION_APPLIED' })
     )

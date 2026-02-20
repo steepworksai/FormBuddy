@@ -1,7 +1,7 @@
 import type { Suggestion, UsedField } from '../../types'
 import { readIndexEntry, readManifest, writeIndexEntry } from './manifest'
 
-const INDEXING_DIR = '.indexing'
+const INDEXING_DIR = 'FormBuddy'
 const USAGE_FILE = 'usage.json'
 
 export interface UsageSession {

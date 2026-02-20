@@ -66,6 +66,15 @@ class MemoryDirectoryHandle {
     return new MemoryDirectoryHandle(this.store, nextPath)
   }
 
+  async removeEntry(name: string, options?: { recursive?: boolean }): Promise<void> {
+    const prefix = `${this.root}/${name}`
+    for (const key of [...this.store.keys()]) {
+      if (key === prefix || (options?.recursive && key.startsWith(prefix + '/'))) {
+        this.store.delete(key)
+      }
+    }
+  }
+
   async getFileHandle(
     name: string,
     options?: { create?: boolean }

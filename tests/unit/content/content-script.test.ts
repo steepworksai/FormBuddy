@@ -108,21 +108,14 @@ describe('TM4 content script behavior', () => {
     expect(focusedCalls).toHaveLength(1)
   })
 
-  it('autofills focused input and dispatches input/change events', async () => {
+  it('ignores legacy AUTOFILL_FIELD message', async () => {
     const { dispatchFocus, emitRuntimeMessage } = await setupWithHtml(`<input id="f1" aria-label="First name" />`)
     const input = document.getElementById('f1') as HTMLInputElement
-
-    const inputEventSpy = vi.fn()
-    const changeEventSpy = vi.fn()
-    input.addEventListener('input', inputEventSpy)
-    input.addEventListener('change', changeEventSpy)
 
     dispatchFocus(input)
     emitRuntimeMessage({ type: 'AUTOFILL_FIELD', payload: { value: 'Alice' } })
 
-    expect(input.value).toBe('Alice')
-    expect(inputEventSpy).toHaveBeenCalledTimes(1)
-    expect(changeEventSpy).toHaveBeenCalledTimes(1)
+    expect(input.value).toBe('')
   })
 
   it('sends screenshot hotkey message for Cmd/Ctrl + Shift + S', async () => {
@@ -138,12 +131,16 @@ describe('TM4 content script behavior', () => {
     expect(sendMessageMock).toHaveBeenCalledWith({ type: 'SCREENSHOT_HOTKEY' })
   })
 
-  it('triggers lookup on hover and shows floating fill card', async () => {
+  it('triggers lookup on hover and shows floating copy card', async () => {
     vi.useFakeTimers()
     const { sendMessageMock, dispatchHover, emitRuntimeMessage } = await setupWithHtml(
       `<input id="passport" aria-label="Passport Number" />`
     )
     const input = document.getElementById('passport') as HTMLInputElement
+    const clipboardWrite = vi.fn(async () => undefined)
+    ;(globalThis.navigator as Navigator & { clipboard?: { writeText: (value: string) => Promise<void> } }).clipboard = {
+      writeText: clipboardWrite,
+    }
 
     dispatchHover(input)
     vi.advanceTimersByTime(250)
@@ -168,13 +165,13 @@ describe('TM4 content script behavior', () => {
       },
     })
 
-    const fillButton = Array.from(document.querySelectorAll('button')).find(
-      node => node.textContent === 'Fill'
+    const copyButton = Array.from(document.querySelectorAll('button')).find(
+      node => node.textContent === 'Copy'
     ) as HTMLButtonElement | undefined
 
-    expect(fillButton).toBeTruthy()
-    fillButton?.click()
-    expect(input.value).toBe('P9384721')
+    expect(copyButton).toBeTruthy()
+    copyButton?.click()
+    expect(clipboardWrite).toHaveBeenCalledWith('P9384721')
     expect(sendMessageMock).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'SUGGESTION_ACCEPTED',

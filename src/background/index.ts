@@ -29,12 +29,9 @@ interface ContextUpdatedPayload {
   documents: DocumentIndex[]
 }
 
-interface FormSchemaPayload {
-  fields: FieldFocusedPayload[]
-}
-
 interface ManualFieldFetchPayload {
   fields: string[]
+  rawInput?: string
 }
 
 type SuggestionOverride = Omit<Suggestion, 'id' | 'sessionId' | 'usedAt'> | null
@@ -43,12 +40,6 @@ let indexedDocuments: DocumentIndex[] = []
 let activeDomain = ''
 let activeSessionId = ''
 let pageHistory: string[] = []
-let currentFormFields: FieldFocusedPayload[] = []
-let lastFormTabId: number | null = null
-let formMappingSignature = ''
-let formMappingBuildInFlight: Promise<void> | null = null
-const mappedByFieldId = new Map<string, Omit<Suggestion, 'id' | 'sessionId'>>()
-const mappedByFieldLabel = new Map<string, Omit<Suggestion, 'id' | 'sessionId'>>()
 const usedFieldIds = new Set<string>()
 const rejectedFieldIds = new Set<string>()
 
@@ -88,11 +79,6 @@ function getDomain(url?: string): string {
   }
 }
 
-function isBrowserInternalUrl(url: string | undefined): boolean {
-  if (!url) return false
-  return /^(chrome|chrome-extension|edge|about):/i.test(url)
-}
-
 function ensureSession(url?: string): string {
   const domain = getDomain(url)
   if (!activeSessionId || !activeDomain || activeDomain !== domain) {
@@ -109,11 +95,6 @@ function resetSession(): void {
   activeDomain = ''
   activeSessionId = ''
   pageHistory = []
-  currentFormFields = []
-  formMappingSignature = ''
-  mappedByFieldId.clear()
-  mappedByFieldLabel.clear()
-  formMappingBuildInFlight = null
   usedFieldIds.clear()
   rejectedFieldIds.clear()
 }
@@ -321,144 +302,18 @@ async function loadLLMConfig(): Promise<LLMConfig | null> {
   return (result.llmConfig as LLMConfig) ?? null
 }
 
-async function requestFormSchemaFromActiveTab(): Promise<number> {
-  async function extractSchemaViaScript(tabId: number): Promise<number> {
-    try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          const normalize = (value: string | null | undefined) => (value ?? '').trim().replace(/\s+/g, ' ')
-          const humanize = (value: string) =>
-            normalize(value)
-              .replace(/[_-]+/g, ' ')
-              .replace(/\b\w/g, c => c.toUpperCase())
-
-          const readLabel = (el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement): string => {
-            const aria = normalize(el.getAttribute('aria-label'))
-            if (aria) return aria
-            if (el.id) {
-              const linked = document.querySelector(`label[for="${CSS.escape(el.id)}"]`)
-              if (linked instanceof HTMLLabelElement) {
-                const txt = normalize(linked.textContent)
-                if (txt) return txt
-              }
-            }
-            if ('placeholder' in el) {
-              const placeholder = normalize((el as HTMLInputElement | HTMLTextAreaElement).placeholder)
-              if (placeholder) return placeholder
-            }
-            const parentLabel = el.closest('label')
-            if (parentLabel) {
-              const txt = normalize(parentLabel.textContent)
-              if (txt) return txt
-            }
-            return ''
-          }
-
-          const all = Array.from(document.querySelectorAll('input, textarea, select'))
-          const seen = new Set<string>()
-          const fields: Array<{ fieldId: string; fieldLabel: string; tagName: string }> = []
-          for (const node of all) {
-            if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement)) continue
-            const primaryLabel = readLabel(node)
-            const fallbackLabel =
-              humanize(node.name) ||
-              humanize(node.id) ||
-              ('placeholder' in node ? humanize((node as HTMLInputElement | HTMLTextAreaElement).placeholder) : '') ||
-              'Field'
-            const fieldLabel =
-              primaryLabel && fallbackLabel && primaryLabel.toLowerCase() !== fallbackLabel.toLowerCase()
-                ? `${primaryLabel} (${fallbackLabel})`
-                : (primaryLabel || fallbackLabel)
-            const fieldId = normalize(node.id) || normalize(node.name) || fieldLabel
-            if (!fieldId) continue
-            const key = fieldId.toLowerCase()
-            if (seen.has(key)) continue
-            seen.add(key)
-            fields.push({ fieldId, fieldLabel, tagName: node.tagName })
-          }
-          return fields
-        },
-      })
-      const fields = (results?.[0]?.result ?? []) as FieldFocusedPayload[]
-      if (Array.isArray(fields) && fields.length > 0) {
-        currentFormFields = fields.filter(field => field.fieldId && field.fieldLabel).slice(0, 100)
-        logFormKv('Fallback script extracted form schema', { fields: currentFormFields.length })
-        return currentFormFields.length
-      }
-    } catch (err) {
-      logFormKv('Fallback script schema extraction failed', {
-        message: err instanceof Error ? err.message : String(err),
-      })
-    }
-    return 0
-  }
-
-  if (lastFormTabId) {
-    try {
-      logFormKv('Requesting form schema from last known form tab', { tabId: lastFormTabId })
-      const response = await chrome.tabs.sendMessage(lastFormTabId, { type: 'REQUEST_FORM_SCHEMA' }, { frameId: 0 }) as
-        | { ok?: boolean; fields?: FieldFocusedPayload[] }
-        | undefined
-      if (response?.ok && Array.isArray(response.fields)) {
-        currentFormFields = response.fields.filter(field => field.fieldId && field.fieldLabel).slice(0, 100)
-        logFormKv('Received form schema from last known tab', { fields: currentFormFields.length })
-      }
-      logFormKv('Form schema request sent (last known form tab)')
-      if (currentFormFields.length > 0) return currentFormFields.length
-      return await extractSchemaViaScript(lastFormTabId)
-    } catch {
-      logFormKv('Last known form tab is unavailable, trying fallback tab selection')
-    }
-  }
-
-  const tabs = await chrome.tabs.query({ currentWindow: true })
-  const active = tabs.find(tab => tab.active && tab.id && !isBrowserInternalUrl(tab.url))
-  const fallback = tabs.find(tab => tab.id && !isBrowserInternalUrl(tab.url))
-  const target = active ?? fallback
-  if (!target?.id) {
-    logFormKv('No eligible webpage tab for schema request')
-    return 0
-  }
-  logFormKv('Requesting form schema from selected tab', { tabId: target.id, url: target.url ?? '' })
-  try {
-    const response = await chrome.tabs.sendMessage(target.id, { type: 'REQUEST_FORM_SCHEMA' }, { frameId: 0 }) as
-      | { ok?: boolean; fields?: FieldFocusedPayload[] }
-      | undefined
-    if (response?.ok && Array.isArray(response.fields)) {
-      currentFormFields = response.fields.filter(field => field.fieldId && field.fieldLabel).slice(0, 100)
-      if (target.id) lastFormTabId = target.id
-      logFormKv('Received form schema from selected tab', { fields: currentFormFields.length })
-    }
-    logFormKv('Form schema request sent')
-    if (currentFormFields.length > 0) return currentFormFields.length
-    return await extractSchemaViaScript(target.id)
-  } catch {
-    logFormKv('Failed to send form schema request (no content script/tab not ready)')
-    return await extractSchemaViaScript(target.id)
-  }
-}
-
 function normalizeKey(value: string): string {
   return value.toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
-function applyMappings(mappings: FormKVMapping[]): void {
-  mappedByFieldId.clear()
-  mappedByFieldLabel.clear()
-  for (const item of mappings) {
-    const mapped: Omit<Suggestion, 'id' | 'sessionId'> = {
-      fieldId: item.fieldId,
-      fieldLabel: item.fieldLabel,
-      value: item.value,
-      sourceFile: item.sourceFile || 'Selected documents',
-      sourceText: item.reason || item.value,
-      reason: item.reason || 'Mapped from selected documents and form schema',
-      confidence: item.confidence,
-    }
-    mappedByFieldId.set(normalizeKey(item.fieldId), mapped)
-    mappedByFieldLabel.set(normalizeKey(item.fieldLabel), mapped)
-  }
+function manualFetchSignature(labels: string[], rawInput: string | undefined): string {
+  const docsSig = indexedDocuments
+    .map(doc => `${doc.id}:${doc.indexedAt}:${doc.fileName}`)
+    .sort()
+    .join('|')
+  const fieldsSig = labels.map(label => normalizeKey(label)).sort().join('|')
+  const rawSig = normalizeKey(rawInput ?? '')
+  return `manual_fetch::${docsSig}::${fieldsSig}::${rawSig}`
 }
 
 async function requestFormKVCache(signature: string): Promise<FormKVMapping[] | null> {
@@ -468,10 +323,8 @@ async function requestFormKVCache(signature: string): Promise<FormKVMapping[] | 
       payload: { signature },
     }) as { ok?: boolean; cached?: FormKVMapping[] | null }
     if (!response?.ok) return null
-    logFormKv('Cache lookup response received', { ok: response.ok, size: response.cached?.length ?? 0 })
     return Array.isArray(response.cached) ? response.cached : null
   } catch {
-    logFormKv('Cache lookup failed')
     return null
   }
 }
@@ -482,126 +335,47 @@ async function storeFormKVCache(signature: string, mappings: FormKVMapping[]): P
       type: 'FORM_KV_CACHE_SET',
       payload: { signature, mappings },
     })
-    logFormKv('Cache stored', { size: mappings.length })
   } catch {
-    logFormKv('Cache store skipped/failed (sidepanel may be closed)')
-    // Sidepanel may not be open; in-memory cache still applies for current session.
+    // Sidepanel may be closed; skip cache persistence.
   }
 }
 
-function mappingSignature(): string {
-  const docsSig = indexedDocuments
-    .map(doc => `${doc.id}:${doc.indexedAt}:${Object.keys(doc.searchIndex?.autofill ?? {}).length}:${doc.searchIndex?.items?.length ?? 0}`)
-    .join('|')
-  const fieldSig = currentFormFields
-    .map(field => `${normalizeKey(field.fieldId)}:${normalizeKey(field.fieldLabel)}`)
-    .join('|')
-  return `${docsSig}__${fieldSig}`
+function mappingToManualResult(mapping: FormKVMapping): {
+  fieldLabel: string
+  value: string
+  sourceFile: string
+  sourcePage?: number
+  sourceText: string
+  confidence: 'high' | 'medium' | 'low'
+} {
+  return {
+    fieldLabel: mapping.fieldLabel || mapping.fieldId,
+    value: mapping.value,
+    sourceFile: mapping.sourceFile || 'Selected docs',
+    sourcePage: 1,
+    sourceText: mapping.reason || mapping.value,
+    confidence: mapping.confidence ?? 'medium',
+  }
 }
 
-async function ensureFormMapping(llmConfig: LLMConfig): Promise<void> {
-  if (!currentFormFields.length || !indexedDocuments.length) {
-    logFormKv('Skipping mapping due to missing inputs', {
-      formFields: currentFormFields.length,
-      indexedDocs: indexedDocuments.length,
-    })
-    return
+function manualResultToMapping(item: {
+  fieldLabel: string
+  value: string
+  sourceFile: string
+  sourceText: string
+  confidence: 'high' | 'medium' | 'low'
+}): FormKVMapping {
+  return {
+    fieldId: normalizeKey(item.fieldLabel).replace(/\s+/g, '_') || item.fieldLabel,
+    fieldLabel: item.fieldLabel,
+    value: item.value,
+    sourceFile: item.sourceFile,
+    reason: item.sourceText || item.value,
+    confidence: item.confidence,
   }
-  const nextSignature = mappingSignature()
-  if (formMappingSignature === nextSignature) return
-  if (formMappingBuildInFlight) {
-    await formMappingBuildInFlight
-    return
-  }
-
-  formMappingBuildInFlight = (async () => {
-    logFormKv('Mapping run started', {
-      formFields: currentFormFields.length,
-      indexedDocs: indexedDocuments.length,
-    })
-    emitFormKvStatus('running', { progress: 5, stage: 'Preparing mapping' })
-
-    const cached = await requestFormKVCache(nextSignature)
-    if (cached && cached.length > 0) {
-      logFormKv('Cache hit', { mappings: cached.length })
-      applyMappings(cached)
-      formMappingSignature = nextSignature
-      emitFormKvStatus('ready', { count: cached.length, cached: true, progress: 100, stage: 'Loaded from cache' })
-      chrome.runtime.sendMessage({
-        type: 'FORM_KV_READY',
-        payload: {
-          count: cached.length,
-          mappings: cached,
-          cached: true,
-          generatedAt: new Date().toISOString(),
-        },
-      })
-      return
-    }
-    logFormKv('Cache miss')
-
-    const docsPayload = indexedDocuments
-      .map(doc => ({
-        fileName: doc.fileName,
-        autofill: doc.searchIndex?.autofill ?? {},
-        items: (doc.searchIndex?.items ?? []).slice(0, 60).map(item => ({
-          fieldLabel: item.fieldLabel,
-          value: item.value,
-          aliases: item.aliases ?? [],
-        })),
-      }))
-      .filter(doc => Object.keys(doc.autofill).length > 0 || doc.items.length > 0)
-      .slice(0, 12)
-    if (!docsPayload.length) {
-      logFormKv('No searchable document payload for mapping')
-      emitFormKvStatus('idle', { reason: 'no-indexed-search-data', progress: 0, stage: 'No indexed data' })
-      return
-    }
-
-    logFormKv('Calling LLM form mapper', {
-      fields: currentFormFields.length,
-      docs: docsPayload.length,
-    })
-    emitFormKvStatus('running', { progress: 45, stage: 'Running LLM mapping' })
-    const mappings = await buildFormAutofillMapWithLLM(
-      currentFormFields.map(field => ({ fieldId: field.fieldId, fieldLabel: field.fieldLabel })),
-      docsPayload,
-      llmConfig
-    )
-
-    emitFormKvStatus('running', { progress: 85, stage: 'Saving mapping cache' })
-    applyMappings(mappings)
-    logFormKv('LLM form mapper returned', { mappings: mappings.length })
-    await storeFormKVCache(nextSignature, mappings)
-    formMappingSignature = nextSignature
-    emitFormKvStatus('ready', { count: mappings.length, cached: false, progress: 100, stage: 'Ready' })
-
-    chrome.runtime.sendMessage({
-      type: 'FORM_KV_READY',
-      payload: {
-        count: mappings.length,
-        mappings,
-        cached: false,
-        generatedAt: new Date().toISOString(),
-      },
-    })
-  })().finally(() => {
-    formMappingBuildInFlight = null
-  })
-
-  await formMappingBuildInFlight
-}
-
-function getMappedSuggestion(fieldId: string, fieldLabel: string): Omit<Suggestion, 'id' | 'sessionId'> | null {
-  return (
-    mappedByFieldId.get(normalizeKey(fieldId)) ??
-    mappedByFieldLabel.get(normalizeKey(fieldLabel)) ??
-    null
-  )
 }
 
 async function handleFieldFocused(payload: FieldFocusedPayload, sender: chrome.runtime.MessageSender) {
-  if (sender.tab?.id) lastFormTabId = sender.tab.id
   const sessionId = ensureSession(sender.url ?? sender.tab?.url)
   if (usedFieldIds.has(payload.fieldId) || rejectedFieldIds.has(payload.fieldId)) return
 
@@ -640,27 +414,6 @@ async function handleFieldFocused(payload: FieldFocusedPayload, sender: chrome.r
   if (!indexedDocuments.length) return
 
   const llmConfig = await loadLLMConfig()
-  if (llmConfig?.apiKey) {
-    try {
-      await ensureFormMapping(llmConfig)
-      const mapped = getMappedSuggestion(payload.fieldId, payload.fieldLabel)
-      if (mapped?.value) {
-        chrome.runtime.sendMessage({
-          type: 'NEW_SUGGESTION',
-          payload: {
-            id: crypto.randomUUID(),
-            sessionId,
-            ...mapped,
-          },
-        })
-        return
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      emitFormKvStatus('error', { message })
-      console.warn('[FormBuddy] Form mapping LLM call failed:', message)
-    }
-  }
 
   const candidates = queryIndex(payload.fieldLabel, indexedDocuments, 5)
   if (!candidates.length) return
@@ -743,8 +496,32 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
 }> {
   const llmConfig = await loadLLMConfig()
   const labels = (payload.fields ?? []).map(v => v.trim()).filter(Boolean).slice(0, 25)
+
+  console.log('[FormBuddy][BG] handleManualFieldFetch start', {
+    labelCount: labels.length,
+    labels,
+    indexedDocumentCount: indexedDocuments.length,
+    indexedDocuments: indexedDocuments.map(d => d.fileName),
+    hasApiKey: !!llmConfig?.apiKey,
+    provider: llmConfig?.provider,
+    model: llmConfig?.model,
+  })
+
   if (!labels.length) return { results: [], reason: 'No fields were provided.' }
-  if (!indexedDocuments.length) return { results: [], reason: 'No indexed documents are selected.' }
+  if (!indexedDocuments.length) {
+    console.warn('[FormBuddy][BG] No indexed documents in memory — was CONTEXT_UPDATED received?')
+    return { results: [], reason: 'No indexed documents are selected.' }
+  }
+  const signature = manualFetchSignature(labels, payload.rawInput)
+
+  const cached = await requestFormKVCache(signature)
+  if (cached) {
+    logFormKv('Manual field fetch cache hit', { signature, mappings: cached.length })
+    const cachedResults = cached.map(mappingToManualResult)
+    if (cachedResults.length > 0) return { results: cachedResults }
+    return { results: [], reason: 'No matching values found for the requested fields.' }
+  }
+  logFormKv('Manual field fetch cache miss', { signature })
 
   const results: Array<{
   fieldLabel: string
@@ -763,30 +540,14 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
         .map(doc => ({
           fileName: doc.fileName,
           autofill: doc.searchIndex?.autofill ?? {},
-          items: [
-            ...(doc.searchIndex?.items ?? []).slice(0, 80).map(item => ({
-              fieldLabel: item.fieldLabel,
-              value: item.value,
-              aliases: item.aliases ?? [],
-            })),
-            ...doc.pages
-              .flatMap(page => page.fields.map(field => ({
-                fieldLabel: field.label,
-                value: field.value,
-                aliases: [],
-              })))
-              .slice(0, 80),
-            ...doc.pages
-              .filter(page => page.rawText.trim().length > 0)
-              .slice(0, 10)
-              .map(page => ({
-                fieldLabel: 'document_text',
-                value: page.rawText.slice(0, 220),
-                aliases: [],
-              })),
-          ],
+          items: (doc.searchIndex?.items ?? []).slice(0, 200).map(item => ({
+            fieldLabel: item.fieldLabel,
+            value: item.value,
+            aliases: item.aliases ?? [],
+          })),
+          referenceJson: doc,
         }))
-        .filter(doc => Object.keys(doc.autofill).length > 0 || doc.items.length > 0)
+        .filter(doc => Object.keys(doc.autofill).length > 0 || doc.items.length > 0 || !!doc.referenceJson)
         .slice(0, 20)
       hadSearchPayload = docsPayload.length > 0
 
@@ -801,7 +562,10 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
             fieldLabel: label,
           })),
           docsPayload,
-          llmConfig
+          llmConfig,
+          {
+            rawFieldsInput: payload.rawInput,
+          }
         )
 
         for (const mapping of llmMappings) {
@@ -825,7 +589,13 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
     }
   }
 
+  // Bulk LLM already handled all fields — skip per-field fallbacks
+  if (results.length > 0) {
+    logFormKv('Bulk LLM produced results — skipping per-field fallback', { resultCount: results.length })
+  }
+
   for (const label of labels) {
+    if (results.length > 0) break   // bulk LLM succeeded; don't append fallback results
     const normalizedLabel = normalizeKey(label)
     if (seenLabels.has(normalizedLabel)) continue
 
@@ -894,41 +664,28 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
     }
   }
 
-  if (results.length > 0) return { results }
+  if (results.length > 0) {
+    await storeFormKVCache(signature, results.map(manualResultToMapping))
+    return { results }
+  }
   if (!llmConfig?.apiKey) {
+    await storeFormKVCache(signature, [])
     return {
       results: [],
       reason: 'No API key set and local index did not contain matching values.',
     }
   }
   if (!hadSearchPayload) {
+    await storeFormKVCache(signature, [])
     return {
       results: [],
       reason: 'Selected docs do not have usable parsed search data yet. Reindex the selected file(s).',
     }
   }
+  await storeFormKVCache(signature, [])
   return {
     results: [],
     reason: 'LLM and local matching found no confident value for requested fields.',
-  }
-}
-
-async function sendAutofillToActiveTab(value: string): Promise<void> {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
-  const activeTab = tabs[0]
-  if (!activeTab?.id) return
-
-  try {
-    await chrome.tabs.sendMessage(activeTab.id, {
-      type: 'AUTOFILL_FIELD',
-      payload: { value },
-    })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Autofill failed'
-    chrome.runtime.sendMessage({
-      type: 'APP_ERROR',
-      payload: { message },
-    })
   }
 }
 
@@ -936,82 +693,90 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'CONTEXT_UPDATED') {
     const payload = message.payload as ContextUpdatedPayload
     indexedDocuments = payload.documents ?? []
-    formMappingSignature = ''
-    mappedByFieldId.clear()
-    mappedByFieldLabel.clear()
-    void (async () => {
-      const llmConfig = await loadLLMConfig()
-      if (!llmConfig?.apiKey) return
-      await ensureFormMapping(llmConfig)
-    })()
+    if (typeof sendResponse === 'function') {
+      sendResponse({ ok: true, documentCount: indexedDocuments.length })
+    }
     console.log(`[FormBuddy] Context updated: ${indexedDocuments.length} indexed document(s)`)
-    return
+    return true
   }
 
   if (message?.type === 'FORM_SCHEMA') {
-    const payload = message.payload as FormSchemaPayload
-    if (sender.tab?.id) lastFormTabId = sender.tab.id
-    currentFormFields = (payload.fields ?? []).filter(field => field.fieldId && field.fieldLabel).slice(0, 100)
-    logFormKv('Received form schema', { fields: currentFormFields.length })
-    formMappingSignature = ''
-    mappedByFieldId.clear()
-    mappedByFieldLabel.clear()
-    void (async () => {
-      const llmConfig = await loadLLMConfig()
-      if (!llmConfig?.apiKey) return
-      try {
-        await ensureFormMapping(llmConfig)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        emitFormKvStatus('error', { message })
-      }
-    })()
+    logFormKv('FORM_SCHEMA ignored (auto mapping is disabled)')
     return
   }
 
   if (message?.type === 'FORM_KV_FORCE_REFRESH') {
-    formMappingSignature = ''
-    mappedByFieldId.clear()
-    mappedByFieldLabel.clear()
-    emitFormKvStatus('running', { stage: 'Trigger received' })
-    logFormKv('Manual fetch trigger received')
-    sendResponse({ ok: true })
+    emitFormKvStatus('idle', { reason: 'auto-mapping-disabled' })
+    if (typeof sendResponse === 'function') {
+      sendResponse({ ok: true, disabled: true })
+    }
+    return
+  }
+
+  if (message?.type === 'MANUAL_FIELD_FETCH') {
+    const payload = message.payload as ManualFieldFetchPayload
+    console.log('[FormBuddy][BG] MANUAL_FIELD_FETCH received', {
+      fieldCount: payload?.fields?.length,
+      fields: payload?.fields,
+      indexedDocumentCount: indexedDocuments.length,
+    })
     void (async () => {
-      const llmConfig = await loadLLMConfig()
-      if (!llmConfig?.apiKey) {
-        logFormKv('Manual fetch aborted: missing API key')
-        emitFormKvStatus('error', { message: 'Set API key in Settings first.' })
-        return
-      }
       try {
-        const fetchedCount = await requestFormSchemaFromActiveTab()
-        logFormKv('Schema fetch completed', { fields: fetchedCount })
-        if (!currentFormFields.length) {
-          logFormKv('Manual fetch aborted: no form fields detected')
-          emitFormKvStatus('error', { message: 'No form fields detected on this page.' })
-          return
-        }
-        await ensureFormMapping(llmConfig)
+        const output = await handleManualFieldFetch(payload)
+        console.log('[FormBuddy][BG] MANUAL_FIELD_FETCH responding', {
+          ok: true,
+          resultCount: output.results.length,
+          reason: output.reason,
+        })
+        sendResponse({ ok: true, ...output })
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        logFormKv('Manual fetch failed', { message })
-        emitFormKvStatus('error', { message })
+        console.error('[FormBuddy][BG] MANUAL_FIELD_FETCH threw', err)
+        sendResponse({
+          ok: false,
+          message: err instanceof Error ? err.message : String(err),
+        })
       }
     })()
     return true
   }
 
-  if (message?.type === 'MANUAL_FIELD_FETCH') {
-    const payload = message.payload as ManualFieldFetchPayload
+  if (message?.type === 'GET_PAGE_FIELDS') {
     void (async () => {
       try {
-        const output = await handleManualFieldFetch(payload)
-        sendResponse({ ok: true, ...output })
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+        if (!tab?.id) {
+          sendResponse({ ok: false, fields: [] })
+          return
+        }
+        const result = await chrome.tabs.sendMessage(tab.id, { type: 'REQUEST_FORM_SCHEMA' })
+        sendResponse({ ok: true, fields: (result?.fields ?? []) as Array<{ fieldLabel: string }> })
       } catch (err) {
-        sendResponse({
-          ok: false,
-          message: err instanceof Error ? err.message : String(err),
+        sendResponse({ ok: false, fields: [], reason: err instanceof Error ? err.message : String(err) })
+      }
+    })()
+    return true
+  }
+
+  if (message?.type === 'BULK_AUTOFILL') {
+    const mappings = message.payload?.mappings as Array<{ fieldLabel: string; value: string }> | undefined
+    if (!mappings?.length) {
+      sendResponse({ ok: false, reason: 'No mappings provided.' })
+      return true
+    }
+    void (async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+        if (!tab?.id) {
+          sendResponse({ ok: false, reason: 'No active tab found.' })
+          return
+        }
+        const result = await chrome.tabs.sendMessage(tab.id, {
+          type: 'BULK_AUTOFILL',
+          payload: { mappings },
         })
+        sendResponse({ ok: true, ...result })
+      } catch (err) {
+        sendResponse({ ok: false, reason: err instanceof Error ? err.message : String(err) })
       }
     })()
     return true
@@ -1029,7 +794,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!payload?.fieldId || !payload?.value) return
 
     usedFieldIds.add(payload.fieldId)
-    void sendAutofillToActiveTab(payload.value)
 
     chrome.runtime.sendMessage({
       type: 'SUGGESTION_APPLIED',

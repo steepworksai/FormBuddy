@@ -84,80 +84,28 @@ Formatting constraints:
 - No comments.
 - No trailing text.`
 
-/**
- * Configurable prompt parts for manual "Fields From Doc" fetch + form mapping.
- * Edit these arrays/values instead of editing one long prompt paragraph.
- */
-export const FORM_AUTOFILL_MAP_CONFIG = {
-  objective:
-    'Map requested form fields to best values from selected personal document indexes.',
-  canonicalKeys: [
-    'full_name',
-    'first_name',
-    'last_name',
-    'date_of_birth',
-    'email_address',
-    'phone_number',
-    'driver_license_number',
-    'license_class',
-    'issue_date',
-    'expiration_date',
-    'height',
-    'weight',
-    'eye_color',
-    'address',
-    'city',
-    'state',
-    'zip_code',
-    'passport_number',
-    'country',
-  ],
-  rules: [
-    'Use only provided requested fields and document data.',
-    'Prefer exact and semantic matches from autofill keys, aliases, and indexed items.',
-    'For driver-license style requests, prioritize Issue Date, Expiration Date, Height, Weight, and Eye Color when present.',
-    'Requested field lists may include default/sample/prefilled text from forms; treat those as hints, not true values.',
-    'Never copy placeholder/demo/default values unless the same value is explicitly present in selected document data.',
-    'Do not invent values.',
-    'If unsure, omit that field from mappings.',
-    'Keep values concise and form-ready.',
-    'Normalize common date formats when clearly inferable from the source value.',
-    'De-duplicate by fieldId.',
-  ],
-  constraints: [
-    'Output plain JSON only.',
-    'No markdown.',
-    'No comments.',
-    'No trailing text.',
-  ],
-} as const
+export function getManualFieldExtractionPrompt(): string {
+  return `You are a document field extraction assistant.
 
-export function getFormAutofillMapPrompt(): string {
-  return `You are a precise form-value matcher.
+Given a parsed document JSON and a list of form fields, extract the correct value
+for each field and return ONLY as key-value pairs.
 
-Objective:
-- ${FORM_AUTOFILL_MAP_CONFIG.objective}
+## INPUT FORMAT
+- REFERENCE JSON is provided as "reference_json".
+- FORM FIELDS are provided as "form_fields".
 
-Preferred canonical keys:
-- ${FORM_AUTOFILL_MAP_CONFIG.canonicalKeys.join(', ')}
+## RULES
+- Extract values from the JSON in this order: entities -> fields -> rawText.
+- Split names correctly: 2 parts = First + Last, 3 parts = First + Middle + Last.
+- Dates must be YYYY-MM-DD format.
+- Strip prefixes from identifiers when clearly present (example: "DL Y123" -> "Y123").
+- Parse addresses into individual components when requested (Line 1, City, State, ZIP).
+- Disambiguate dates by context (past = issued/DOB, future = expiry).
+- If a value is not found, return "Not Found".
+- Never output placeholder values like "Select", "YYYY-MM-DD", or "123 Main St".
+- Do not include explanations, markdown, tables, bullets, JSON, or extra lines.
 
-Return ONLY valid JSON with this exact shape:
-{
-  "mappings": [
-    {
-      "fieldId": "string",
-      "fieldLabel": "string",
-      "value": "string",
-      "sourceFile": "string",
-      "reason": "string",
-      "confidence": "high | medium | low"
-    }
-  ]
-}
-
-Rules:
-${FORM_AUTOFILL_MAP_CONFIG.rules.map(rule => `- ${rule}`).join('\n')}
-
-Formatting constraints:
-${FORM_AUTOFILL_MAP_CONFIG.constraints.map(rule => `- ${rule}`).join('\n')}`
+## OUTPUT
+Return ONLY key-value pairs, nothing else.
+Field Name: Extracted Value`
 }
