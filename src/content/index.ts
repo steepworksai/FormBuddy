@@ -77,3 +77,40 @@ document.addEventListener('focusin', (event) => {
     payload,
   })
 })
+
+chrome.runtime.onMessage.addListener((message: unknown) => {
+  const msg = message as {
+    type?: string
+    payload?: { value?: string }
+  }
+  if (msg.type !== 'AUTOFILL_FIELD') return
+  if (!lastFocusedEl) return
+
+  const value = msg.payload?.value ?? ''
+  if (lastFocusedEl instanceof HTMLInputElement || lastFocusedEl instanceof HTMLTextAreaElement) {
+    lastFocusedEl.value = value
+    lastFocusedEl.dispatchEvent(new Event('input', { bubbles: true }))
+    lastFocusedEl.dispatchEvent(new Event('change', { bubbles: true }))
+    return
+  }
+
+  if (lastFocusedEl instanceof HTMLSelectElement) {
+    const matching = Array.from(lastFocusedEl.options).find(
+      option => option.value === value || option.text === value
+    )
+    if (matching) {
+      lastFocusedEl.value = matching.value
+      lastFocusedEl.dispatchEvent(new Event('input', { bubbles: true }))
+      lastFocusedEl.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+  }
+})
+
+document.addEventListener('keydown', (event) => {
+  const isMac = navigator.platform.toLowerCase().includes('mac')
+  const modifierPressed = isMac ? event.metaKey : event.ctrlKey
+  const screenshotKey = event.key.toLowerCase() === 's'
+  if (!modifierPressed || !event.shiftKey || !screenshotKey) return
+
+  chrome.runtime.sendMessage({ type: 'SCREENSHOT_HOTKEY' })
+})

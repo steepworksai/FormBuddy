@@ -20,7 +20,7 @@ export async function listFiles(
 export async function writeFileToFolder(
   dirHandle: FileSystemDirectoryHandle,
   fileName: string,
-  content: string
+  content: Blob | ArrayBuffer | string
 ): Promise<void> {
   const fileHandle = await dirHandle.getFileHandle(fileName, { create: true })
   const writable = await fileHandle.createWritable()

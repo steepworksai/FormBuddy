@@ -125,7 +125,13 @@ export async function indexDocument(
   const indexEntry: DocumentIndex = {
     id,
     fileName: file.name,
-    type: ext === 'pdf' ? 'pdf' : ext === 'txt' ? 'text' : 'image',
+    type: file.name.toLowerCase().startsWith('screenshot-')
+      ? 'screenshot'
+      : ext === 'pdf'
+        ? 'pdf'
+        : ext === 'txt'
+          ? 'text'
+          : 'image',
     indexedAt: new Date().toISOString(),
     language: 'en',
     pageCount: pageCount!,

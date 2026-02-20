@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { requestFolderAccess, listFiles } from '../lib/folder/access'
+import { writeFileToFolder } from '../lib/folder/access'
 import { indexDocument } from '../lib/indexing/indexer'
-import { readManifest, writeManifest } from '../lib/indexing/manifest'
+import { readIndexEntry, readManifest, writeManifest } from '../lib/indexing/manifest'
+import { appendUsage, markUsedFieldInDocument } from '../lib/indexing/usage'
 import { getTypeInfo } from '../lib/config/supportedTypes'
+import { isSupported } from '../lib/config/supportedTypes'
 import { MAX_PDF_PAGES } from '../lib/parser/pdf'
-import type { LLMConfig } from '../types'
+import type { DocumentIndex, LLMConfig, Suggestion } from '../types'
 import type { IndexPhase } from '../lib/indexing/indexer'
 
 interface FileEntry {
@@ -20,6 +23,19 @@ interface DetectedField {
   id: string
   label: string
   at: string
+}
+
+interface SuggestionCard {
+  id: string
+  fieldId: string
+  sessionId: string
+  fieldLabel: string
+  value: string
+  sourceFile: string
+  sourcePage?: number
+  sourceText: string
+  reason: string
+  confidence: Suggestion['confidence']
 }
 
 function formatSize(bytes: number): string {
@@ -67,6 +83,12 @@ export default function SidePanel() {
   const [noLLM, setNoLLM]         = useState(false)
   const [refreshed, setRefreshed] = useState(false)
   const [detectedFields, setDetectedFields] = useState<DetectedField[]>([])
+  const [suggestions, setSuggestions] = useState<SuggestionCard[]>([])
+  const [usedLog, setUsedLog] = useState<Array<{ fieldLabel: string; value: string; usedAt: string }>>([])
+  const [navInfo, setNavInfo] = useState<{ pageIndex: number; domain: string; url: string } | null>(null)
+  const [screenshotStatus, setScreenshotStatus] = useState<'idle' | 'indexing' | 'ready' | 'error'>('idle')
+  const [quickNote, setQuickNote] = useState('')
+  const [dropActive, setDropActive] = useState(false)
 
   // Persist between renders without triggering re-renders
   const dirHandleRef = useRef<FileSystemDirectoryHandle | null>(null)
@@ -78,18 +100,84 @@ export default function SidePanel() {
     ) => {
       const msg = message as {
         type?: string
-        payload?: { fieldId?: string; fieldLabel?: string; detectedAt?: string }
+        payload?: {
+          fieldId?: string
+          fieldLabel?: string
+          detectedAt?: string
+          id?: string
+          sessionId?: string
+          value?: string
+          sourceFile?: string
+          sourcePage?: number
+          sourceText?: string
+          reason?: string
+          confidence?: Suggestion['confidence']
+          pageIndex?: number
+          domain?: string
+          url?: string
+          content?: string
+          message?: string
+        }
       }
 
-      if (msg.type !== 'FIELD_DETECTED' || !msg.payload?.fieldLabel) return
+      if (msg.type === 'FIELD_DETECTED' && msg.payload?.fieldLabel) {
+        const next: DetectedField = {
+          id: msg.payload.fieldId ?? crypto.randomUUID(),
+          label: msg.payload.fieldLabel,
+          at: msg.payload.detectedAt ?? new Date().toISOString(),
+        }
 
-      const next: DetectedField = {
-        id: msg.payload.fieldId ?? crypto.randomUUID(),
-        label: msg.payload.fieldLabel,
-        at: msg.payload.detectedAt ?? new Date().toISOString(),
+        setDetectedFields(prev => [next, ...prev].slice(0, 12))
+        return
       }
 
-      setDetectedFields(prev => [next, ...prev].slice(0, 12))
+      if (msg.type === 'NEW_SUGGESTION' && msg.payload?.id && msg.payload.value) {
+        const card: SuggestionCard = {
+          id: msg.payload.id,
+          fieldId: msg.payload.fieldId ?? '',
+          sessionId: msg.payload.sessionId ?? '',
+          fieldLabel: msg.payload.fieldLabel ?? 'Unknown field',
+          value: msg.payload.value,
+          sourceFile: msg.payload.sourceFile ?? 'Unknown source',
+          sourcePage: msg.payload.sourcePage,
+          sourceText: msg.payload.sourceText ?? '',
+          reason: msg.payload.reason ?? '',
+          confidence: msg.payload.confidence ?? 'low',
+        }
+        setSuggestions(prev => {
+          const withoutDuplicate = prev.filter(s => s.id !== card.id)
+          return [card, ...withoutDuplicate].slice(0, 10)
+        })
+        return
+      }
+
+      if (msg.type === 'SUGGESTION_APPLIED' && msg.payload?.id) {
+        setSuggestions(prev => prev.filter(s => s.id !== msg.payload?.id))
+        return
+      }
+
+      if (msg.type === 'PAGE_NAVIGATED' && msg.payload?.url) {
+        setNavInfo({
+          pageIndex: msg.payload.pageIndex ?? 1,
+          domain: msg.payload.domain ?? '',
+          url: msg.payload.url,
+        })
+        return
+      }
+
+      if (msg.type === 'CAPTURE_SCREENSHOT_REQUEST') {
+        void handleCaptureScreenshot()
+        return
+      }
+
+      if (msg.type === 'QUICK_ADD' && typeof msg.payload?.content === 'string') {
+        void handleSaveTextNote(msg.payload.content, true)
+        return
+      }
+
+      if (msg.type === 'APP_ERROR' && typeof msg.payload?.message === 'string') {
+        setError(msg.payload.message)
+      }
     }
 
     chrome.runtime.onMessage.addListener(onMessage)
@@ -98,6 +186,21 @@ export default function SidePanel() {
 
   function patchFile(name: string, patch: Partial<FileEntry>) {
     setFiles(prev => prev.map(f => f.name === name ? { ...f, ...patch } : f))
+  }
+
+  async function syncContextToBackground(dirHandle: FileSystemDirectoryHandle): Promise<void> {
+    const manifest = await readManifest(dirHandle)
+    const documents: DocumentIndex[] = []
+
+    for (const doc of manifest.documents) {
+      const entry = await readIndexEntry(dirHandle, doc.indexFile)
+      if (entry) documents.push(entry)
+    }
+
+    chrome.runtime.sendMessage({
+      type: 'CONTEXT_UPDATED',
+      payload: { documents },
+    })
   }
 
   /** Core indexing loop — called by both the folder button and the refresh button. */
@@ -132,6 +235,8 @@ export default function SidePanel() {
         patchFile(file.name, { status: 'error', error: msg, phase: undefined })
       }
     }
+
+    await syncContextToBackground(dirHandle)
   }
 
   async function handleChooseFolder() {
@@ -156,6 +261,10 @@ export default function SidePanel() {
     } catch (err) {
       setBusy(false)
       if (err instanceof DOMException && err.name === 'AbortError') return
+      if (err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
+        setError('Folder permission denied. Please re-select and allow access.')
+        return
+      }
       setError('Could not access folder. Please try again.')
     }
   }
@@ -209,6 +318,206 @@ export default function SidePanel() {
 
   const hasFolder = folderName !== null
 
+  function screenshotFileName(date: Date): string {
+    const yyyy = date.getFullYear()
+    const mm = String(date.getMonth() + 1).padStart(2, '0')
+    const dd = String(date.getDate()).padStart(2, '0')
+    const hh = String(date.getHours()).padStart(2, '0')
+    const min = String(date.getMinutes()).padStart(2, '0')
+    return `screenshot-${yyyy}-${mm}-${dd}-${hh}${min}.png`
+  }
+
+  async function persistUsage(suggestion: SuggestionCard): Promise<void> {
+    const dirHandle = dirHandleRef.current
+    if (!dirHandle) return
+
+    const usedAt = new Date().toISOString()
+    const domain = window.location.hostname || 'unknown'
+
+    const suggestionForStorage: Suggestion = {
+      id: suggestion.id,
+      fieldId: suggestion.fieldId,
+      fieldLabel: suggestion.fieldLabel,
+      value: suggestion.value,
+      sourceFile: suggestion.sourceFile,
+      sourcePage: suggestion.sourcePage,
+      sourceText: suggestion.sourceText,
+      reason: suggestion.reason,
+      confidence: suggestion.confidence,
+      sessionId: suggestion.sessionId,
+      usedAt: new Date(usedAt),
+    }
+
+    await markUsedFieldInDocument(dirHandle, suggestionForStorage, domain, usedAt)
+    await appendUsage(dirHandle, suggestionForStorage, domain, usedAt)
+
+    setUsedLog(prev => [{ fieldLabel: suggestion.fieldLabel, value: suggestion.value, usedAt }, ...prev].slice(0, 20))
+  }
+
+  async function handleAcceptSuggestion(suggestion: SuggestionCard): Promise<void> {
+    const payload: Suggestion = {
+      id: suggestion.id,
+      fieldId: suggestion.fieldId,
+      fieldLabel: suggestion.fieldLabel,
+      value: suggestion.value,
+      sourceFile: suggestion.sourceFile,
+      sourcePage: suggestion.sourcePage,
+      sourceText: suggestion.sourceText,
+      reason: suggestion.reason,
+      confidence: suggestion.confidence,
+      sessionId: suggestion.sessionId,
+    }
+
+    chrome.runtime.sendMessage({ type: 'SUGGESTION_ACCEPTED', payload })
+    await persistUsage(suggestion)
+  }
+
+  function handleDismissSuggestion(id: string): void {
+    setSuggestions(prev => prev.filter(s => s.id !== id))
+  }
+
+  function handleRejectSuggestion(item: SuggestionCard): void {
+    chrome.runtime.sendMessage({ type: 'SUGGESTION_REJECTED', payload: { fieldId: item.fieldId } })
+    setSuggestions(prev => prev.filter(s => s.id !== item.id))
+  }
+
+  async function handleCaptureScreenshot(): Promise<void> {
+    const dirHandle = dirHandleRef.current
+    if (!dirHandle) {
+      setError('Choose a folder before capturing screenshots.')
+      return
+    }
+
+    try {
+      setScreenshotStatus('indexing')
+      setError(null)
+
+      const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' })
+      const response = await fetch(dataUrl)
+      const blob = await response.blob()
+      const fileName = screenshotFileName(new Date())
+
+      await writeFileToFolder(dirHandle, fileName, blob)
+
+      const screenshotFile = new File([blob], fileName, { type: 'image/png' })
+      const llmConfig = await loadLLMConfig()
+
+      setFiles(prev => [
+        { name: fileName, size: screenshotFile.size, status: 'indexing', phase: 'ocr' },
+        ...prev,
+      ])
+
+      const result = await indexDocument(
+        screenshotFile,
+        dirHandle,
+        pct => patchFile(fileName, { ocrProgress: pct }),
+        phase => patchFile(fileName, { phase }),
+        llmConfig
+      )
+
+      if (result.status === 'too-large') {
+        patchFile(fileName, {
+          status: 'too-large',
+          phase: undefined,
+          error: `Screenshot too large (${result.pageCount} pages, max ${MAX_PDF_PAGES})`,
+        })
+      } else if (result.status === 'skipped') {
+        patchFile(fileName, { status: 'skipped', phase: undefined, ocrProgress: undefined })
+      } else {
+        patchFile(fileName, { status: 'indexed', phase: undefined, ocrProgress: undefined })
+      }
+
+      rawFilesRef.current = [screenshotFile, ...rawFilesRef.current]
+      await syncContextToBackground(dirHandle)
+      setScreenshotStatus('ready')
+      setTimeout(() => setScreenshotStatus('idle'), 2500)
+    } catch (err) {
+      setScreenshotStatus('error')
+      setError(err instanceof Error ? err.message : 'Failed to capture screenshot.')
+      setTimeout(() => setScreenshotStatus('idle'), 2500)
+    }
+  }
+
+  async function addFileToContext(file: File): Promise<void> {
+    const dirHandle = dirHandleRef.current
+    if (!dirHandle) {
+      setError('Choose a folder before adding files.')
+      return
+    }
+
+    const llmConfig = await loadLLMConfig()
+    patchFile(file.name, { status: 'indexing', phase: 'parsing', ocrProgress: undefined, error: undefined })
+
+    try {
+      await writeFileToFolder(dirHandle, file.name, file)
+
+      const result = await indexDocument(
+        file,
+        dirHandle,
+        pct => patchFile(file.name, { ocrProgress: pct }),
+        phase => patchFile(file.name, { phase }),
+        llmConfig
+      )
+
+      if (result.status === 'too-large') {
+        patchFile(file.name, {
+          status: 'too-large',
+          phase: undefined,
+          error: `PDF too large (${result.pageCount} pages, max ${MAX_PDF_PAGES})`,
+        })
+      } else if (result.status === 'skipped') {
+        patchFile(file.name, { status: 'skipped', phase: undefined, ocrProgress: undefined })
+      } else {
+        patchFile(file.name, { status: 'indexed', phase: undefined, ocrProgress: undefined })
+      }
+
+      rawFilesRef.current = [file, ...rawFilesRef.current.filter(f => f.name !== file.name)]
+      await syncContextToBackground(dirHandle)
+    } catch (err) {
+      patchFile(file.name, {
+        status: 'error',
+        phase: undefined,
+        error: err instanceof Error ? err.message : 'Failed to add file.',
+      })
+    }
+  }
+
+  async function handleDrop(event: React.DragEvent<HTMLDivElement>): Promise<void> {
+    event.preventDefault()
+    setDropActive(false)
+    const dropped = Array.from(event.dataTransfer.files)
+    if (!dropped.length) return
+
+    for (const file of dropped) {
+      if (!isSupported(file.name)) {
+        setError(`Unsupported file type: ${file.name}`)
+        continue
+      }
+      setFiles(prev => [{ name: file.name, size: file.size, status: 'pending' }, ...prev])
+      await addFileToContext(file)
+    }
+  }
+
+  async function handleSaveTextNote(noteOverride?: string, fromQuickAdd = false): Promise<void> {
+    const dirHandle = dirHandleRef.current
+    if (!dirHandle) {
+      setError('Choose a folder before saving notes.')
+      return
+    }
+
+    const content = (noteOverride ?? quickNote).trim()
+    if (!content) return
+
+    const now = new Date()
+    const noteName = `note-${now.toISOString().replace(/[:.]/g, '-')}.txt`
+    const noteFile = new File([content], noteName, { type: 'text/plain' })
+
+    setFiles(prev => [{ name: noteName, size: noteFile.size, status: 'pending' }, ...prev])
+    await addFileToContext(noteFile)
+
+    if (!fromQuickAdd) setQuickNote('')
+  }
+
   return (
     <div style={styles.container}>
 
@@ -216,6 +525,16 @@ export default function SidePanel() {
       <div style={styles.titleRow}>
         <h1 style={styles.title}>FormBuddy</h1>
         <div style={styles.iconRow}>
+          {hasFolder && (
+            <button
+              style={styles.iconBtn}
+              onClick={() => void handleCaptureScreenshot()}
+              disabled={busy || screenshotStatus === 'indexing'}
+              title="Capture screenshot (Cmd/Ctrl+Shift+S)"
+            >
+              {screenshotStatus === 'indexing' ? '⏳' : '📸'}
+            </button>
+          )}
           {hasFolder && (
             <button
               style={styles.iconBtn}
@@ -239,6 +558,23 @@ export default function SidePanel() {
         {busy ? 'Working…' : hasFolder ? '↺ Change Folder' : '📂 Choose Folder'}
       </button>
 
+      {hasFolder && (
+        <div
+          style={{
+            ...styles.dropZone,
+            ...(dropActive ? styles.dropZoneActive : {}),
+          }}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setDropActive(true)
+          }}
+          onDragLeave={() => setDropActive(false)}
+          onDrop={(e) => void handleDrop(e)}
+        >
+          Drag and drop files here to quick-add
+        </div>
+      )}
+
       {/* Warnings / feedback */}
       {noLLM && (
         <div style={styles.warningBox}>
@@ -247,10 +583,19 @@ export default function SidePanel() {
         </div>
       )}
       {refreshed && <p style={styles.successMsg}>✓ Refreshed with latest settings</p>}
+      {screenshotStatus === 'indexing' && <p style={styles.infoMsg}>Indexing screenshot...</p>}
+      {screenshotStatus === 'ready' && <p style={styles.successMsg}>✓ Screenshot indexed and ready</p>}
       {error     && <p style={styles.errorMsg}>{error}</p>}
 
       {/* Folder label */}
       {folderName && <p style={styles.folderName}>📁 {folderName}</p>}
+      {navInfo && (
+        <div style={styles.navBox}>
+          <span style={styles.navText}>
+            Session: Page {navInfo.pageIndex} • {navInfo.domain}
+          </span>
+        </div>
+      )}
 
       {/* File list */}
       {files.length > 0 && (
@@ -272,6 +617,21 @@ export default function SidePanel() {
         <p style={styles.empty}>No supported files found in this folder.</p>
       )}
 
+      {hasFolder && (
+        <div style={styles.suggestionSection}>
+          <h2 style={styles.feedTitle}>Quick Text Note (Milestone 11)</h2>
+          <textarea
+            style={styles.noteInput}
+            value={quickNote}
+            onChange={(e) => setQuickNote(e.target.value)}
+            placeholder="Type a quick note (for example: My loyalty number is ABC-123-XYZ)"
+          />
+          <button style={styles.noteSaveBtn} onClick={() => void handleSaveTextNote()}>
+            Save Note
+          </button>
+        </div>
+      )}
+
       <div style={styles.feedSection}>
         <h2 style={styles.feedTitle}>Detected Fields (Milestone 6)</h2>
         {detectedFields.length === 0 ? (
@@ -281,6 +641,48 @@ export default function SidePanel() {
             {detectedFields.map(item => (
               <li key={`${item.id}-${item.at}`} style={styles.feedItem}>
                 Detected: {item.label}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div style={styles.suggestionSection}>
+        <h2 style={styles.feedTitle}>Suggestions (Milestone 7)</h2>
+        {suggestions.length === 0 ? (
+          <p style={styles.feedEmpty}>Focus a field to generate suggestions from indexed documents.</p>
+        ) : (
+          <ul style={styles.feedList}>
+            {suggestions.map(item => (
+              <li key={item.id} style={styles.suggestionItem}>
+                <p style={styles.suggestionField}>{item.fieldLabel}</p>
+                <p style={styles.suggestionValue}>{item.value}</p>
+                <p style={styles.suggestionSource}>
+                  From: {item.sourceFile}{item.sourcePage ? `, Page ${item.sourcePage}` : ''}
+                </p>
+                {item.reason && <p style={styles.suggestionReason}>{item.reason}</p>}
+                {item.sourceText && <p style={styles.suggestionSnippet}>“{item.sourceText}”</p>}
+                <span style={styles.confidenceBadge}>{item.confidence}</span>
+                <div style={styles.suggestionActions}>
+                  <button style={styles.acceptBtn} onClick={() => void handleAcceptSuggestion(item)}>Accept</button>
+                  <button style={styles.dismissBtn} onClick={() => handleDismissSuggestion(item.id)}>Dismiss</button>
+                  <button style={styles.rejectBtn} onClick={() => handleRejectSuggestion(item)}>Reject</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div style={styles.suggestionSection}>
+        <h2 style={styles.feedTitle}>Used Suggestions (Milestone 8)</h2>
+        {usedLog.length === 0 ? (
+          <p style={styles.feedEmpty}>Accepted suggestions appear here.</p>
+        ) : (
+          <ul style={styles.feedList}>
+            {usedLog.map((item, idx) => (
+              <li key={`${item.usedAt}-${idx}`} style={styles.feedItem}>
+                Used: {item.fieldLabel} → {item.value}
               </li>
             ))}
           </ul>
@@ -343,6 +745,18 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '12px',
     color: '#92400e',
   },
+  navBox: {
+    marginTop: '8px',
+    padding: '6px 8px',
+    background: '#eef2ff',
+    border: '1px solid #c7d2fe',
+    borderRadius: '5px',
+  },
+  navText: {
+    fontSize: '12px',
+    color: '#3730a3',
+    fontWeight: 600,
+  },
   inlineBtn: {
     background: 'none',
     border: 'none',
@@ -355,7 +769,23 @@ const styles: Record<string, React.CSSProperties> = {
   },
   successMsg: { margin: '8px 0 0', color: '#065f46', fontSize: '12px' },
   errorMsg:   { margin: '8px 0 0', color: '#d93025', fontSize: '13px' },
+  infoMsg:    { margin: '8px 0 0', color: '#374151', fontSize: '12px' },
   empty:      { marginTop: '12px', color: '#888', fontSize: '13px' },
+  dropZone: {
+    marginTop: '10px',
+    border: '1px dashed #9ca3af',
+    borderRadius: '6px',
+    padding: '10px',
+    textAlign: 'center',
+    fontSize: '12px',
+    color: '#4b5563',
+    background: '#f9fafb',
+  },
+  dropZoneActive: {
+    borderColor: '#2563eb',
+    background: '#eff6ff',
+    color: '#1d4ed8',
+  },
   list:       { margin: '6px 0 0', padding: 0, listStyle: 'none' },
   item: {
     display: 'flex',
@@ -403,5 +833,112 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     padding: '6px 8px',
     marginBottom: '6px',
+  },
+  suggestionSection: {
+    marginTop: '14px',
+    borderTop: '1px solid #ececec',
+    paddingTop: '10px',
+  },
+  suggestionItem: {
+    background: '#f8fafc',
+    border: '1px solid #e5e7eb',
+    borderRadius: '6px',
+    padding: '8px',
+    marginBottom: '8px',
+  },
+  suggestionField: {
+    margin: '0 0 4px',
+    fontSize: '12px',
+    color: '#374151',
+    fontWeight: 700,
+  },
+  suggestionValue: {
+    margin: 0,
+    fontSize: '16px',
+    color: '#111827',
+    fontWeight: 700,
+    wordBreak: 'break-word',
+  },
+  suggestionSource: {
+    margin: '6px 0 0',
+    fontSize: '11px',
+    color: '#4b5563',
+  },
+  suggestionReason: {
+    margin: '4px 0 0',
+    fontSize: '11px',
+    color: '#4b5563',
+  },
+  suggestionSnippet: {
+    margin: '4px 0 0',
+    fontSize: '11px',
+    color: '#6b7280',
+  },
+  confidenceBadge: {
+    display: 'inline-block',
+    marginTop: '6px',
+    fontSize: '10px',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.04em',
+    background: '#e5e7eb',
+    color: '#111827',
+    borderRadius: '999px',
+    padding: '2px 6px',
+    fontWeight: 700,
+  },
+  suggestionActions: {
+    display: 'flex',
+    gap: '6px',
+    marginTop: '8px',
+  },
+  acceptBtn: {
+    padding: '4px 8px',
+    fontSize: '11px',
+    borderRadius: '4px',
+    border: 'none',
+    background: '#16a34a',
+    color: '#fff',
+    cursor: 'pointer',
+  },
+  dismissBtn: {
+    padding: '4px 8px',
+    fontSize: '11px',
+    borderRadius: '4px',
+    border: '1px solid #d1d5db',
+    background: '#fff',
+    color: '#374151',
+    cursor: 'pointer',
+  },
+  rejectBtn: {
+    padding: '4px 8px',
+    fontSize: '11px',
+    borderRadius: '4px',
+    border: '1px solid #ef4444',
+    background: '#fff5f5',
+    color: '#b91c1c',
+    cursor: 'pointer',
+  },
+  noteInput: {
+    width: '100%',
+    minHeight: '66px',
+    boxSizing: 'border-box' as const,
+    marginTop: '8px',
+    border: '1px solid #d1d5db',
+    borderRadius: '6px',
+    padding: '8px',
+    fontSize: '12px',
+    fontFamily: 'inherit',
+    resize: 'vertical' as const,
+  },
+  noteSaveBtn: {
+    marginTop: '8px',
+    padding: '6px 10px',
+    fontSize: '12px',
+    borderRadius: '5px',
+    border: 'none',
+    background: '#2563eb',
+    color: '#fff',
+    cursor: 'pointer',
+    fontWeight: 600,
   },
 }
