@@ -30,6 +30,7 @@ describe('TM2 manifest', () => {
           sizeBytes: 10,
           indexedAt: now,
           language: 'en',
+          llmPrepared: false,
           needsReindex: false,
         },
       ],
@@ -74,8 +75,9 @@ describe('TM2 manifest', () => {
       summary: '',
       usedFields: [],
     }
-    const manifestEntry = buildManifestEntry(entry, 'sha256:test', 12)
+    const manifestEntry = buildManifestEntry(entry, 'sha256:test', 12, false)
     expect(manifestEntry.indexFile).toBe('doc-3.json')
+    expect(manifestEntry.llmPrepared).toBe(false)
     expect(manifestEntry.needsReindex).toBe(false)
   })
 })

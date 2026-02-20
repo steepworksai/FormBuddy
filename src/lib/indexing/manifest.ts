@@ -69,7 +69,8 @@ export async function writeIndexEntry(
 export function buildManifestEntry(
   entry: DocumentIndex,
   checksum: string,
-  sizeBytes: number
+  sizeBytes: number,
+  llmPrepared: boolean
 ): ManifestEntry {
   return {
     id: entry.id,
@@ -80,6 +81,7 @@ export function buildManifestEntry(
     sizeBytes,
     indexedAt: entry.indexedAt,
     language: entry.language,
+    llmPrepared,
     needsReindex: false,
   }
 }

@@ -83,6 +83,7 @@ export interface ManifestEntry {
   sizeBytes: number;
   indexedAt: string;
   language: string;
+  llmPrepared: boolean;
   needsReindex: boolean;
 }
 

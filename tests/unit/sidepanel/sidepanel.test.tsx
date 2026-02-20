@@ -14,8 +14,6 @@ const readManifestMock = vi.fn(async () => ({
 }))
 const writeManifestMock = vi.fn()
 const readIndexEntryMock = vi.fn()
-const appendUsageMock = vi.fn()
-const markUsedFieldInDocumentMock = vi.fn()
 
 vi.mock('../../../src/lib/folder/access', () => ({
   requestFolderAccess: requestFolderAccessMock,
@@ -31,11 +29,6 @@ vi.mock('../../../src/lib/indexing/manifest', () => ({
   readManifest: readManifestMock,
   writeManifest: writeManifestMock,
   readIndexEntry: readIndexEntryMock,
-}))
-
-vi.mock('../../../src/lib/indexing/usage', () => ({
-  appendUsage: appendUsageMock,
-  markUsedFieldInDocument: markUsedFieldInDocumentMock,
 }))
 
 vi.mock('../../../src/lib/config/supportedTypes', () => ({
@@ -85,7 +78,13 @@ function installChromeMock(): ChromeMock {
     },
     tabs: {
       captureVisibleTab: vi.fn(async () => 'data:image/png;base64,AAAA'),
+      query: vi.fn(async () => [{ id: 1, active: true, windowId: 1, url: 'https://example.com' }]),
+      update: vi.fn(async () => ({})),
     },
+  }
+
+  ;(globalThis.navigator as Navigator & { clipboard?: { writeText: (value: string) => Promise<void> } }).clipboard = {
+    writeText: vi.fn(async () => undefined),
   }
 
   return chromeMock
@@ -95,107 +94,83 @@ describe('TM6 sidepanel component', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     requestFolderAccessMock.mockResolvedValue({ name: 'FormBuddyDocs' })
+    listFilesMock.mockResolvedValue([new File(['Passport Number: P9384721'], 'profile.txt', { type: 'text/plain' })])
     indexDocumentMock.mockResolvedValue({ status: 'indexed', entry: { id: 'd1' } })
+    readManifestMock.mockResolvedValue({
+      version: '1.0',
+      createdAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      documents: [
+        {
+          id: 'd1',
+          fileName: 'profile.txt',
+          type: 'text',
+          indexFile: 'd1.json',
+          checksum: 'x',
+          sizeBytes: 10,
+          indexedAt: new Date().toISOString(),
+          language: 'en',
+          llmPrepared: false,
+          needsReindex: false,
+        },
+      ],
+    })
+    readIndexEntryMock.mockResolvedValue({
+      id: 'd1',
+      fileName: 'profile.txt',
+      type: 'text',
+      indexedAt: new Date().toISOString(),
+      language: 'en',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          rawText: 'Passport Number: P9384721',
+          fields: [
+            {
+              label: 'Passport Number',
+              value: 'P9384721',
+              confidence: 'high',
+              boundingContext: 'Passport Number: P9384721',
+            },
+          ],
+        },
+      ],
+      entities: { identifiers: ['P9384721'] },
+      summary: 'test profile',
+      usedFields: [],
+    })
   })
 
   afterEach(() => {
     cleanup()
   })
 
-  it('renders default empty state cleanly', async () => {
+  it('renders search-driven layout', async () => {
     installChromeMock()
     const { default: SidePanel } = await import('../../../src/sidepanel/SidePanel')
     render(<SidePanel />)
 
     expect(screen.getByRole('heading', { name: 'FormBuddy' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /choose folder/i })).toBeInTheDocument()
-    expect(screen.getByText('Field Activity')).toBeInTheDocument()
-    expect(screen.getByText('Suggestions')).toBeInTheDocument()
-    expect(screen.getByText('Filled This Session')).toBeInTheDocument()
+    expect(screen.getByText('Search & Copy')).toBeInTheDocument()
+    expect(screen.getByText('Copied This Session')).toBeInTheDocument()
+    expect(screen.queryByText('Field Activity')).not.toBeInTheDocument()
+    expect(screen.queryByText('Suggestions')).not.toBeInTheDocument()
   })
 
-  it('renders suggestion card from runtime message and supports dismiss', async () => {
-    const chromeMock = installChromeMock()
+  it('searches indexed field values and copies selected result', async () => {
+    installChromeMock()
     const { default: SidePanel } = await import('../../../src/sidepanel/SidePanel')
     render(<SidePanel />)
 
-    chromeMock.runtimeMessageListener?.({
-      type: 'NEW_SUGGESTION',
-      payload: {
-        id: 's1',
-        fieldId: 'passport_number',
-        fieldLabel: 'Passport Number',
-        sessionId: 'sess-1',
-        value: 'AB123456',
-        sourceFile: 'passport.pdf',
-        sourcePage: 1,
-        sourceText: 'Passport AB123456',
-        reason: 'Found in source',
-        confidence: 'high',
-      },
-    })
+    fireEvent.click(screen.getByRole('button', { name: /choose folder/i }))
+    await screen.findByText('profile.txt')
 
-    expect(await screen.findByText('AB123456')).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText(/search field/i), { target: { value: 'passport number' } })
+    await screen.findByText('P9384721')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
-    await waitFor(() => {
-      expect(screen.queryByText('AB123456')).not.toBeInTheDocument()
-    })
-  })
-
-  it('sends accept and reject messages for suggestion actions', async () => {
-    const chromeMock = installChromeMock()
-    const { default: SidePanel } = await import('../../../src/sidepanel/SidePanel')
-    render(<SidePanel />)
-
-    chromeMock.runtimeMessageListener?.({
-      type: 'NEW_SUGGESTION',
-      payload: {
-        id: 's2',
-        fieldId: 'passport_number',
-        fieldLabel: 'Passport Number',
-        sessionId: 'sess-2',
-        value: 'CD987654',
-        sourceFile: 'passport.pdf',
-        sourcePage: 1,
-        sourceText: 'Passport CD987654',
-        reason: 'Found in source',
-        confidence: 'high',
-      },
-    })
-
-    await screen.findByText('CD987654')
-    fireEvent.click(screen.getByRole('button', { name: 'Accept' }))
-    expect(chromeMock.runtimeSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'SUGGESTION_ACCEPTED' })
-    )
-
-    chromeMock.runtimeMessageListener?.({
-      type: 'NEW_SUGGESTION',
-      payload: {
-        id: 's3',
-        fieldId: 'email',
-        fieldLabel: 'Email',
-        sessionId: 'sess-3',
-        value: 'user@example.com',
-        sourceFile: 'note.txt',
-        sourceText: 'user@example.com',
-        reason: 'Found in note',
-        confidence: 'medium',
-      },
-    })
-    await screen.findByText('user@example.com')
-    const emailValueNode = screen.getByText('user@example.com')
-    const emailCard = emailValueNode.closest('li')
-    expect(emailCard).not.toBeNull()
-    const rejectButton = emailCard?.querySelector('button:last-of-type') as HTMLButtonElement
-    fireEvent.click(rejectButton)
-    expect(chromeMock.runtimeSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'SUGGESTION_REJECTED',
-        payload: { fieldId: 'email' },
-      })
-    )
+    fireEvent.click(screen.getAllByRole('button', { name: 'Copy' })[0])
+    await screen.findByText(/Passport Number -> P9384721/)
   })
 
   it('updates no-key warning when storage llmConfig changes', async () => {

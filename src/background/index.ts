@@ -71,6 +71,60 @@ function resetSession(): void {
   rejectedFieldIds.clear()
 }
 
+function tokenize(input: string): string[] {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+function overlapScore(a: string, bTokens: string[]): number {
+  const lower = a.toLowerCase()
+  return bTokens.reduce((acc, token) => acc + (lower.includes(token) ? 1 : 0), 0)
+}
+
+function findLocalFieldSuggestion(fieldId: string, fieldLabel: string): Omit<Suggestion, 'id' | 'sessionId'> | null {
+  const tokens = tokenize(fieldLabel)
+  let best: {
+    value: string
+    sourceFile: string
+    sourcePage?: number
+    sourceText: string
+    score: number
+  } | null = null
+
+  for (const doc of indexedDocuments) {
+    for (const page of doc.pages) {
+      for (const field of page.fields) {
+        const score = overlapScore(field.label, tokens) * 3 + overlapScore(field.value, tokens)
+        if (score <= 0) continue
+        if (!best || score > best.score) {
+          best = {
+            value: field.value,
+            sourceFile: doc.fileName,
+            sourcePage: page.page,
+            sourceText: field.boundingContext || field.value,
+            score,
+          }
+        }
+      }
+    }
+  }
+
+  if (!best) return null
+  return {
+    fieldId,
+    fieldLabel,
+    value: best.value,
+    sourceFile: best.sourceFile,
+    sourcePage: best.sourcePage,
+    sourceText: best.sourceText,
+    reason: 'Matched from indexed field data',
+    confidence: 'medium',
+  }
+}
+
 async function loadLLMConfig(): Promise<LLMConfig | null> {
   const result = await chrome.storage.local.get('llmConfig')
   return (result.llmConfig as LLMConfig) ?? null
@@ -118,7 +172,19 @@ async function handleFieldFocused(payload: FieldFocusedPayload, sender: chrome.r
   if (!candidates.length) return
 
   const llmConfig = await loadLLMConfig()
-  if (!llmConfig?.apiKey) return
+  if (!llmConfig?.apiKey) {
+    const local = findLocalFieldSuggestion(payload.fieldId, payload.fieldLabel)
+    if (!local?.value) return
+    chrome.runtime.sendMessage({
+      type: 'NEW_SUGGESTION',
+      payload: {
+        id: crypto.randomUUID(),
+        sessionId,
+        ...local,
+      },
+    })
+    return
+  }
 
   let suggested: Awaited<ReturnType<typeof generateSuggestionWithLLM>> = null
   try {
@@ -130,13 +196,34 @@ async function handleFieldFocused(payload: FieldFocusedPayload, sender: chrome.r
     )
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown LLM error'
+    const local = findLocalFieldSuggestion(payload.fieldId, payload.fieldLabel)
+    if (local?.value) {
+      chrome.runtime.sendMessage({
+        type: 'NEW_SUGGESTION',
+        payload: {
+          id: crypto.randomUUID(),
+          sessionId,
+          ...local,
+        },
+      })
+      return
+    }
+    chrome.runtime.sendMessage({ type: 'APP_ERROR', payload: { message: `LLM error: ${message}` } })
+    return
+  }
+  if (!suggested?.value) {
+    const local = findLocalFieldSuggestion(payload.fieldId, payload.fieldLabel)
+    if (!local?.value) return
     chrome.runtime.sendMessage({
-      type: 'APP_ERROR',
-      payload: { message: `LLM error: ${message}` },
+      type: 'NEW_SUGGESTION',
+      payload: {
+        id: crypto.randomUUID(),
+        sessionId,
+        ...local,
+      },
     })
     return
   }
-  if (!suggested?.value) return
 
   const suggestion: Suggestion = {
     id: crypto.randomUUID(),

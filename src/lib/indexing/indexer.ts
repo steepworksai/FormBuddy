@@ -9,8 +9,10 @@ import {
 import { extractTextFromPDF, PDFTooLargeError } from '../parser/pdf'
 import { extractTextFromImage, ocrCanvases } from '../parser/ocr'
 import { extractEntitiesWithLLM } from '../llm/extractor'
+import { organizeFieldsWithLLM } from '../llm/fieldOrganizer'
+import { extractFieldsFromRawText } from './fieldExtract'
 import { getTypeInfo } from '../config/supportedTypes'
-import type { DocumentIndex, LLMConfig, PageEntry } from '../../types'
+import type { DocumentIndex, FieldEntry, LLMConfig, PageEntry } from '../../types'
 
 export type IndexResult =
   | { status: 'indexed'; entry: DocumentIndex }
@@ -19,6 +21,18 @@ export type IndexResult =
   | { status: 'too-large'; fileName: string; pageCount: number }
 
 export type IndexPhase = 'parsing' | 'ocr' | 'extracting' | 'writing'
+
+function dedupeFields(fields: FieldEntry[]): FieldEntry[] {
+  const seen = new Set<string>()
+  const result: FieldEntry[] = []
+  for (const field of fields) {
+    const key = `${field.label.toLowerCase()}|${field.value.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(field)
+  }
+  return result
+}
 
 export async function indexDocument(
   file: File,
@@ -34,6 +48,16 @@ export async function indexDocument(
   const manifest = await readManifest(dirHandle)
 
   const existing = manifest.documents.find(d => d.fileName === file.name)
+  const previousEntry = existing ? await readIndexEntry(dirHandle, `${existing.id}.json`) : null
+  const llmAlreadyPrepared =
+    existing?.llmPrepared === true ||
+    !!(
+      previousEntry &&
+      (
+        (previousEntry.summary && previousEntry.summary.trim().length > 0) ||
+        Object.values(previousEntry.entities ?? {}).some(values => values.length > 0)
+      )
+    )
   if (existing && existing.checksum === checksum && !existing.needsReindex) {
     console.log(`[FormBuddy] Skipped (unchanged): ${file.name}`)
     return { status: 'skipped', fileName: file.name }
@@ -99,23 +123,54 @@ export async function indexDocument(
   }
 
   // ── Phase 3: LLM Entity Extraction ───────────────────────
+  pages = pages.map(page => ({
+    ...page,
+    fields: page.fields.length > 0 ? page.fields : extractFieldsFromRawText(page.rawText),
+  }))
+
+  if (llmConfig?.apiKey && !llmAlreadyPrepared) {
+    const extractedCount = pages.reduce((acc, page) => acc + page.fields.length, 0)
+    if (extractedCount < 3) {
+      try {
+        const fullText = pages.map(p => p.rawText).join('\n')
+        const organizedFields = await organizeFieldsWithLLM(fullText, file.name, llmConfig)
+        if (organizedFields.length > 0) {
+          const firstPage = pages[0] ?? { page: 1, rawText: '', fields: [] }
+          firstPage.fields = dedupeFields([...firstPage.fields, ...organizedFields])
+          pages = [firstPage, ...pages.slice(1)]
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(`[FormBuddy] Field organizer failed for ${file.name}:`, message)
+      }
+    }
+  }
+
   let entities: Record<string, string[]> = {}
   let summary = ''
 
-  if (llmConfig?.apiKey) {
+  let llmPreparedThisRun = false
+  if (llmConfig?.apiKey && !llmAlreadyPrepared) {
     onPhase?.('extracting')
     try {
       const fullText = pages.map(p => p.rawText).join('\n')
       const result = await extractEntitiesWithLLM(fullText, file.name, llmConfig)
       entities = result.entities
       summary = result.summary
+      llmPreparedThisRun = true
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.warn(`[FormBuddy] LLM extraction failed for ${file.name}:`, message)
       throw new Error(`LLM error: ${message}`)
     }
   } else {
-    console.log(`[FormBuddy] No LLM config — skipping entity extraction for ${file.name}`)
+    if (llmAlreadyPrepared && previousEntry) {
+      entities = previousEntry.entities
+      summary = previousEntry.summary
+      console.log(`[FormBuddy] LLM already prepared — skipping LLM reindex for ${file.name}`)
+    } else {
+      console.log(`[FormBuddy] No LLM config — skipping entity extraction for ${file.name}`)
+    }
   }
 
   // ── Phase 4: Write ────────────────────────────────────────
@@ -150,7 +205,7 @@ export async function indexDocument(
     lastUpdated: new Date().toISOString(),
     documents: [
       ...manifest.documents.filter(d => d.fileName !== file.name),
-      buildManifestEntry(indexEntry, checksum, file.size),
+      buildManifestEntry(indexEntry, checksum, file.size, llmAlreadyPrepared || llmPreparedThisRun),
     ],
   }
   await writeManifest(dirHandle, updatedManifest)

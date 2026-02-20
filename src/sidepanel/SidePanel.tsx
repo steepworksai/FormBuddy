@@ -1,13 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { requestFolderAccess, listFiles } from '../lib/folder/access'
 import { writeFileToFolder } from '../lib/folder/access'
 import { indexDocument } from '../lib/indexing/indexer'
 import { readIndexEntry, readManifest, writeManifest } from '../lib/indexing/manifest'
-import { appendUsage, markUsedFieldInDocument } from '../lib/indexing/usage'
 import { getTypeInfo } from '../lib/config/supportedTypes'
 import { isSupported } from '../lib/config/supportedTypes'
 import { MAX_PDF_PAGES } from '../lib/parser/pdf'
-import type { DocumentIndex, LLMConfig, Suggestion } from '../types'
+import type { DocumentIndex, LLMConfig } from '../types'
 import type { IndexPhase } from '../lib/indexing/indexer'
 
 interface FileEntry {
@@ -19,23 +18,13 @@ interface FileEntry {
   error?: string
 }
 
-interface DetectedField {
+interface LookupResult {
   id: string
   label: string
-  at: string
-}
-
-interface SuggestionCard {
-  id: string
-  fieldId: string
-  sessionId: string
-  fieldLabel: string
   value: string
   sourceFile: string
   sourcePage?: number
   sourceText: string
-  reason: string
-  confidence: Suggestion['confidence']
 }
 
 function formatSize(bytes: number): string {
@@ -129,12 +118,12 @@ async function indexWithOptionalOverride(
   return await indexDocument(file, dirHandle, onOcrProgress, onPhase, llmConfig)
 }
 
-/** Mark every document in the manifest needsReindex so the LLM step re-runs. */
+/** Mark only never-LLM-processed documents for reindex. */
 async function markAllForReindex(dirHandle: FileSystemDirectoryHandle): Promise<void> {
   const manifest = await readManifest(dirHandle)
   await writeManifest(dirHandle, {
     ...manifest,
-    documents: manifest.documents.map(d => ({ ...d, needsReindex: true })),
+    documents: manifest.documents.map(d => ({ ...d, needsReindex: d.llmPrepared ? false : true })),
   })
 }
 
@@ -145,17 +134,20 @@ export default function SidePanel() {
   const [busy, setBusy]           = useState(false)
   const [noLLM, setNoLLM]         = useState(false)
   const [refreshed, setRefreshed] = useState(false)
-  const [detectedFields, setDetectedFields] = useState<DetectedField[]>([])
-  const [suggestions, setSuggestions] = useState<SuggestionCard[]>([])
-  const [usedLog, setUsedLog] = useState<Array<{ fieldLabel: string; value: string; usedAt: string }>>([])
+  const [indexedDocs, setIndexedDocs] = useState<DocumentIndex[]>([])
+  const [lookupQuery, setLookupQuery] = useState('')
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [copyLog, setCopyLog] = useState<Array<{ label: string; value: string; copiedAt: string }>>([])
   const [navInfo, setNavInfo] = useState<{ pageIndex: number; domain: string; url: string } | null>(null)
   const [screenshotStatus, setScreenshotStatus] = useState<'idle' | 'indexing' | 'ready' | 'error'>('idle')
   const [quickNote, setQuickNote] = useState('')
   const [dropActive, setDropActive] = useState(false)
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
 
   // Persist between renders without triggering re-renders
-  const dirHandleRef = useRef<FileSystemDirectoryHandle | null>(null)
-  const rawFilesRef  = useRef<File[]>([])
+  const dirHandleRef       = useRef<FileSystemDirectoryHandle | null>(null)
+  const rawFilesRef        = useRef<File[]>([])
+  const selectedFilesRef   = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const testHooks = window as unknown as {
@@ -176,59 +168,12 @@ export default function SidePanel() {
       const msg = message as {
         type?: string
         payload?: {
-          fieldId?: string
-          fieldLabel?: string
-          detectedAt?: string
-          id?: string
-          sessionId?: string
-          value?: string
-          sourceFile?: string
-          sourcePage?: number
-          sourceText?: string
-          reason?: string
-          confidence?: Suggestion['confidence']
           pageIndex?: number
           domain?: string
           url?: string
           content?: string
           message?: string
         }
-      }
-
-      if (msg.type === 'FIELD_DETECTED' && msg.payload?.fieldLabel) {
-        const next: DetectedField = {
-          id: msg.payload.fieldId ?? crypto.randomUUID(),
-          label: msg.payload.fieldLabel,
-          at: msg.payload.detectedAt ?? new Date().toISOString(),
-        }
-
-        setDetectedFields(prev => [next, ...prev].slice(0, 12))
-        return
-      }
-
-      if (msg.type === 'NEW_SUGGESTION' && msg.payload?.id && msg.payload.value) {
-        const card: SuggestionCard = {
-          id: msg.payload.id,
-          fieldId: msg.payload.fieldId ?? '',
-          sessionId: msg.payload.sessionId ?? '',
-          fieldLabel: msg.payload.fieldLabel ?? 'Unknown field',
-          value: msg.payload.value,
-          sourceFile: msg.payload.sourceFile ?? 'Unknown source',
-          sourcePage: msg.payload.sourcePage,
-          sourceText: msg.payload.sourceText ?? '',
-          reason: msg.payload.reason ?? '',
-          confidence: msg.payload.confidence ?? 'low',
-        }
-        setSuggestions(prev => {
-          const withoutDuplicate = prev.filter(s => s.id !== card.id)
-          return [card, ...withoutDuplicate].slice(0, 10)
-        })
-        return
-      }
-
-      if (msg.type === 'SUGGESTION_APPLIED' && msg.payload?.id) {
-        setSuggestions(prev => prev.filter(s => s.id !== msg.payload?.id))
-        return
       }
 
       if (msg.type === 'PAGE_NAVIGATED' && msg.payload?.url) {
@@ -276,18 +221,42 @@ export default function SidePanel() {
     return () => chrome.storage.onChanged.removeListener(onStorageChanged)
   }, [])
 
+  // Keep ref current and re-sync context whenever the selection changes
+  useEffect(() => {
+    selectedFilesRef.current = selectedFiles
+    const dirHandle = dirHandleRef.current
+    if (!dirHandle) return
+    void syncContextToBackground(dirHandle)
+  }, [selectedFiles])
+
   function patchFile(name: string, patch: Partial<FileEntry>) {
     setFiles(prev => prev.map(f => f.name === name ? { ...f, ...patch } : f))
+  }
+
+  function toggleFileSelection(name: string) {
+    setSelectedFiles(prev => {
+      const next = new Set(prev)
+      next.has(name) ? next.delete(name) : next.add(name)
+      return next
+    })
+  }
+
+  function clearSelection() {
+    setSelectedFiles(new Set())
   }
 
   async function syncContextToBackground(dirHandle: FileSystemDirectoryHandle): Promise<void> {
     const manifest = await readManifest(dirHandle)
     const documents: DocumentIndex[] = []
+    const filter = selectedFilesRef.current
 
     for (const doc of manifest.documents) {
+      // When the user has checked specific files, only include those
+      if (filter.size > 0 && !filter.has(doc.fileName)) continue
       const entry = await readIndexEntry(dirHandle, doc.indexFile)
       if (entry) documents.push(entry)
     }
+    setIndexedDocs(documents)
 
     chrome.runtime.sendMessage({
       type: 'CONTEXT_UPDATED',
@@ -427,58 +396,58 @@ export default function SidePanel() {
     return `screenshot-${yyyy}-${mm}-${dd}-${hh}${min}.png`
   }
 
-  async function persistUsage(suggestion: SuggestionCard): Promise<void> {
-    const dirHandle = dirHandleRef.current
-    if (!dirHandle) return
+  const lookupResults = useMemo((): LookupResult[] => {
+    const q = lookupQuery.trim().toLowerCase()
+    if (!q) return []
 
-    const usedAt = new Date().toISOString()
-    const domain = window.location.hostname || 'unknown'
+    const tokens = q.split(/\s+/).filter(Boolean)
+    const scored: Array<LookupResult & { score: number }> = []
 
-    const suggestionForStorage: Suggestion = {
-      id: suggestion.id,
-      fieldId: suggestion.fieldId,
-      fieldLabel: suggestion.fieldLabel,
-      value: suggestion.value,
-      sourceFile: suggestion.sourceFile,
-      sourcePage: suggestion.sourcePage,
-      sourceText: suggestion.sourceText,
-      reason: suggestion.reason,
-      confidence: suggestion.confidence,
-      sessionId: suggestion.sessionId,
-      usedAt: new Date(usedAt),
+    for (const doc of indexedDocs) {
+      for (const page of doc.pages) {
+        for (const field of page.fields) {
+          const label = field.label.toLowerCase()
+          const value = field.value.toLowerCase()
+          const labelScore = tokens.reduce((acc, token) => acc + (label.includes(token) ? 2 : 0), 0)
+          const valueScore = tokens.reduce((acc, token) => acc + (value.includes(token) ? 1 : 0), 0)
+          const score = labelScore + valueScore
+          if (!score) continue
+
+          scored.push({
+            id: `${doc.id}-${page.page}-${field.label}-${field.value}`,
+            label: field.label,
+            value: field.value,
+            sourceFile: doc.fileName,
+            sourcePage: page.page,
+            sourceText: field.boundingContext || field.value,
+            score: score + 10,
+          })
+        }
+      }
     }
 
-    await markUsedFieldInDocument(dirHandle, suggestionForStorage, domain, usedAt)
-    await appendUsage(dirHandle, suggestionForStorage, domain, usedAt)
-
-    setUsedLog(prev => [{ fieldLabel: suggestion.fieldLabel, value: suggestion.value, usedAt }, ...prev].slice(0, 20))
-  }
-
-  async function handleAcceptSuggestion(suggestion: SuggestionCard): Promise<void> {
-    const payload: Suggestion = {
-      id: suggestion.id,
-      fieldId: suggestion.fieldId,
-      fieldLabel: suggestion.fieldLabel,
-      value: suggestion.value,
-      sourceFile: suggestion.sourceFile,
-      sourcePage: suggestion.sourcePage,
-      sourceText: suggestion.sourceText,
-      reason: suggestion.reason,
-      confidence: suggestion.confidence,
-      sessionId: suggestion.sessionId,
+    const deduped = new Map<string, LookupResult & { score: number }>()
+    for (const item of scored) {
+      const key = `${item.value}|${item.sourceFile}|${item.sourcePage ?? 0}`
+      const existing = deduped.get(key)
+      if (!existing || item.score > existing.score) deduped.set(key, item)
     }
 
-    chrome.runtime.sendMessage({ type: 'SUGGESTION_ACCEPTED', payload })
-    await persistUsage(suggestion)
-  }
+    return [...deduped.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 12)
+      .map(({ score: _score, ...rest }) => rest)
+  }, [lookupQuery, indexedDocs])
 
-  function handleDismissSuggestion(id: string): void {
-    setSuggestions(prev => prev.filter(s => s.id !== id))
-  }
-
-  function handleRejectSuggestion(item: SuggestionCard): void {
-    chrome.runtime.sendMessage({ type: 'SUGGESTION_REJECTED', payload: { fieldId: item.fieldId } })
-    setSuggestions(prev => prev.filter(s => s.id !== item.id))
+  async function copyLookupValue(item: LookupResult): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(item.value)
+      setCopiedId(item.id)
+      setCopyLog(prev => [{ label: item.label, value: item.value, copiedAt: new Date().toISOString() }, ...prev].slice(0, 20))
+      setTimeout(() => setCopiedId(null), 1200)
+    } catch {
+      setError('Clipboard copy failed. Please copy manually.')
+    }
   }
 
   async function handleCaptureScreenshot(): Promise<void> {
@@ -708,18 +677,32 @@ export default function SidePanel() {
 
       {/* File list */}
       {files.length > 0 && (
-        <ul style={styles.list}>
-          {files.map(f => (
-            <li key={f.name} style={styles.item}>
-              <span>{getTypeInfo(f.name)?.icon ?? '📁'}</span>
-              <span style={styles.fileName}>
-                {f.name}
-                <span style={styles.subtext}>{fileSubtext(f)}</span>
-              </span>
-              <span title={f.status}>{STATUS_ICON[f.status]}</span>
-            </li>
-          ))}
-        </ul>
+        <>
+          {selectedFiles.size > 0 && (
+            <div style={styles.filterBanner}>
+              <span>Using {selectedFiles.size} of {files.length} file{selectedFiles.size !== 1 ? 's' : ''}</span>
+              <button style={styles.clearFilterBtn} onClick={clearSelection}>Use all</button>
+            </div>
+          )}
+          <ul style={styles.list}>
+            {files.map(f => (
+              <li key={f.name} style={styles.item}>
+                <input
+                  type="checkbox"
+                  checked={selectedFiles.has(f.name)}
+                  onChange={() => toggleFileSelection(f.name)}
+                  style={styles.checkbox}
+                />
+                <span>{getTypeInfo(f.name)?.icon ?? '📁'}</span>
+                <span style={styles.fileName}>
+                  {f.name}
+                  <span style={styles.subtext}>{fileSubtext(f)}</span>
+                </span>
+                <span title={f.status}>{STATUS_ICON[f.status]}</span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {hasFolder && files.length === 0 && !busy && (
@@ -742,41 +725,29 @@ export default function SidePanel() {
       )}
 
       <div style={styles.panelCard}>
-        <h2 style={styles.sectionTitle}>Field Activity</h2>
-        {detectedFields.length === 0 ? (
-          <p style={styles.feedEmpty}>Click into a form field to start detection.</p>
+        <h2 style={styles.sectionTitle}>Search & Copy</h2>
+        <input
+          style={styles.lookupInput}
+          value={lookupQuery}
+          onChange={(e) => setLookupQuery(e.target.value)}
+          placeholder="Search field (for example: passport number)"
+        />
+        {lookupQuery.trim().length === 0 ? (
+          <p style={styles.feedEmpty}>Search your indexed data and copy values directly.</p>
+        ) : lookupResults.length === 0 ? (
+          <p style={styles.feedEmpty}>No matching values found.</p>
         ) : (
           <ul style={styles.feedList}>
-            {detectedFields.map(item => (
-              <li key={`${item.id}-${item.at}`} style={styles.feedItem}>
-                {item.label}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div style={styles.panelCard}>
-        <h2 style={styles.sectionTitle}>Suggestions</h2>
-        {suggestions.length === 0 ? (
-          <p style={styles.feedEmpty}>Suggestions will appear when a field matches your indexed documents.</p>
-        ) : (
-          <ul style={styles.feedList}>
-            {suggestions.map(item => (
-              <li key={item.id} style={styles.suggestionItem}>
-                <p style={styles.suggestionField}>{item.fieldLabel}</p>
-                <p style={styles.suggestionValue}>{item.value}</p>
-                <p style={styles.suggestionSource}>
+            {lookupResults.map(item => (
+              <li key={item.id} style={styles.lookupItem}>
+                <p style={styles.lookupLabel}>{item.label}</p>
+                <p style={styles.lookupValue}>{item.value}</p>
+                <p style={styles.lookupSource}>
                   From: {item.sourceFile}{item.sourcePage ? `, Page ${item.sourcePage}` : ''}
                 </p>
-                {item.reason && <p style={styles.suggestionReason}>{item.reason}</p>}
-                {item.sourceText && <p style={styles.suggestionSnippet}>“{item.sourceText}”</p>}
-                <span style={styles.confidenceBadge}>{item.confidence}</span>
-                <div style={styles.suggestionActions}>
-                  <button style={styles.acceptBtn} onClick={() => void handleAcceptSuggestion(item)}>Accept</button>
-                  <button style={styles.dismissBtn} onClick={() => handleDismissSuggestion(item.id)}>Dismiss</button>
-                  <button style={styles.rejectBtn} onClick={() => handleRejectSuggestion(item)}>Reject</button>
-                </div>
+                <button style={styles.copyBtn} onClick={() => void copyLookupValue(item)}>
+                  {copiedId === item.id ? 'Copied' : 'Copy'}
+                </button>
               </li>
             ))}
           </ul>
@@ -784,14 +755,14 @@ export default function SidePanel() {
       </div>
 
       <div style={styles.panelCard}>
-        <h2 style={styles.sectionTitle}>Filled This Session</h2>
-        {usedLog.length === 0 ? (
-          <p style={styles.feedEmpty}>Accepted suggestions will be tracked here.</p>
+        <h2 style={styles.sectionTitle}>Copied This Session</h2>
+        {copyLog.length === 0 ? (
+          <p style={styles.feedEmpty}>Copied values will be tracked here.</p>
         ) : (
           <ul style={styles.feedList}>
-            {usedLog.map((item, idx) => (
-              <li key={`${item.usedAt}-${idx}`} style={styles.feedItem}>
-                {item.fieldLabel} {'->'} {item.value}
+            {copyLog.map((item, idx) => (
+              <li key={`${item.copiedAt}-${idx}`} style={styles.feedItem}>
+                {item.label} {'->'} {item.value}
               </li>
             ))}
           </ul>
@@ -917,6 +888,29 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
   },
   subtext: { fontSize: '11px', color: '#888', marginTop: '1px' },
+  checkbox: { flexShrink: 0, cursor: 'pointer', accentColor: '#1a73e8' },
+  filterBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: '8px',
+    padding: '5px 8px',
+    background: '#eff6ff',
+    border: '1px solid #bfdbfe',
+    borderRadius: '5px',
+    fontSize: '12px',
+    color: '#1e40af',
+    fontWeight: 600,
+  },
+  clearFilterBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#1a73e8',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 600,
+    padding: 0,
+  },
   panelCard: {
     marginTop: '14px',
     border: '1px solid #e5e7eb',
@@ -950,84 +944,50 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px 8px',
     marginBottom: '6px',
   },
-  suggestionItem: {
+  lookupInput: {
+    width: '100%',
+    boxSizing: 'border-box' as const,
+    marginTop: '8px',
+    border: '1px solid #d1d5db',
+    borderRadius: '6px',
+    padding: '8px',
+    fontSize: '12px',
+  },
+  lookupItem: {
     background: '#f8fafc',
     border: '1px solid #e5e7eb',
     borderRadius: '6px',
     padding: '8px',
     marginBottom: '8px',
   },
-  suggestionField: {
+  lookupLabel: {
     margin: '0 0 4px',
     fontSize: '12px',
     color: '#374151',
     fontWeight: 700,
   },
-  suggestionValue: {
+  lookupValue: {
     margin: 0,
-    fontSize: '16px',
+    fontSize: '14px',
     color: '#111827',
     fontWeight: 700,
     wordBreak: 'break-word',
   },
-  suggestionSource: {
+  lookupSource: {
     margin: '6px 0 0',
     fontSize: '11px',
     color: '#4b5563',
   },
-  suggestionReason: {
-    margin: '4px 0 0',
-    fontSize: '11px',
-    color: '#4b5563',
-  },
-  suggestionSnippet: {
-    margin: '4px 0 0',
-    fontSize: '11px',
-    color: '#6b7280',
-  },
-  confidenceBadge: {
-    display: 'inline-block',
+  copyBtn: {
     marginTop: '6px',
-    fontSize: '10px',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.04em',
-    background: '#e5e7eb',
-    color: '#111827',
-    borderRadius: '999px',
-    padding: '2px 6px',
-    fontWeight: 700,
-  },
-  suggestionActions: {
-    display: 'flex',
-    gap: '6px',
-    marginTop: '8px',
-  },
-  acceptBtn: {
     padding: '4px 8px',
     fontSize: '11px',
     borderRadius: '4px',
-    border: 'none',
-    background: '#16a34a',
-    color: '#fff',
+    border: '1px solid #2563eb',
+    background: '#eff6ff',
+    color: '#1d4ed8',
     cursor: 'pointer',
-  },
-  dismissBtn: {
-    padding: '4px 8px',
-    fontSize: '11px',
-    borderRadius: '4px',
-    border: '1px solid #d1d5db',
-    background: '#fff',
-    color: '#374151',
-    cursor: 'pointer',
-  },
-  rejectBtn: {
-    padding: '4px 8px',
-    fontSize: '11px',
-    borderRadius: '4px',
-    border: '1px solid #ef4444',
-    background: '#fff5f5',
-    color: '#b91c1c',
-    cursor: 'pointer',
+    fontWeight: 600,
   },
   noteInput: {
     width: '100%',

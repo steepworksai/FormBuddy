@@ -38,11 +38,16 @@ async function setupWithHtml(html: string) {
     element.dispatchEvent(event)
   }
 
+  function dispatchHover(element: Element) {
+    const event = new MouseEvent('mouseover', { bubbles: true })
+    element.dispatchEvent(event)
+  }
+
   function emitRuntimeMessage(message: unknown) {
     for (const listener of onMessageListeners) listener(message)
   }
 
-  return { sendMessageMock, dispatchFocus, emitRuntimeMessage }
+  return { sendMessageMock, dispatchFocus, dispatchHover, emitRuntimeMessage }
 }
 
 describe('TM4 content script behavior', () => {
@@ -128,5 +133,51 @@ describe('TM4 content script behavior', () => {
     document.dispatchEvent(event)
 
     expect(sendMessageMock).toHaveBeenCalledWith({ type: 'SCREENSHOT_HOTKEY' })
+  })
+
+  it('triggers lookup on hover and shows floating fill card', async () => {
+    vi.useFakeTimers()
+    const { sendMessageMock, dispatchHover, emitRuntimeMessage } = await setupWithHtml(
+      `<input id="passport" aria-label="Passport Number" />`
+    )
+    const input = document.getElementById('passport') as HTMLInputElement
+
+    dispatchHover(input)
+    vi.advanceTimersByTime(250)
+
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'FIELD_FOCUSED',
+        payload: expect.objectContaining({ fieldId: 'passport', fieldLabel: 'Passport Number' }),
+      })
+    )
+
+    emitRuntimeMessage({
+      type: 'NEW_SUGGESTION',
+      payload: {
+        id: 's1',
+        fieldId: 'passport',
+        fieldLabel: 'Passport Number',
+        value: 'P9384721',
+        sourceFile: 'profile.pdf',
+        confidence: 'high',
+        sessionId: 'sess-1',
+      },
+    })
+
+    const fillButton = Array.from(document.querySelectorAll('button')).find(
+      node => node.textContent === 'Fill'
+    ) as HTMLButtonElement | undefined
+
+    expect(fillButton).toBeTruthy()
+    fillButton?.click()
+    expect(input.value).toBe('P9384721')
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'SUGGESTION_ACCEPTED',
+        payload: expect.objectContaining({ id: 's1', fieldId: 'passport', value: 'P9384721' }),
+      })
+    )
+    vi.useRealTimers()
   })
 })
