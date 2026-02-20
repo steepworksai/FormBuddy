@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { requestFolderAccess, listFiles } from '../lib/folder/access'
 import { indexDocument } from '../lib/indexing/indexer'
 import { readManifest, writeManifest } from '../lib/indexing/manifest'
@@ -14,6 +14,12 @@ interface FileEntry {
   phase?: IndexPhase
   ocrProgress?: number
   error?: string
+}
+
+interface DetectedField {
+  id: string
+  label: string
+  at: string
 }
 
 function formatSize(bytes: number): string {
@@ -60,10 +66,35 @@ export default function SidePanel() {
   const [busy, setBusy]           = useState(false)
   const [noLLM, setNoLLM]         = useState(false)
   const [refreshed, setRefreshed] = useState(false)
+  const [detectedFields, setDetectedFields] = useState<DetectedField[]>([])
 
   // Persist between renders without triggering re-renders
   const dirHandleRef = useRef<FileSystemDirectoryHandle | null>(null)
   const rawFilesRef  = useRef<File[]>([])
+
+  useEffect(() => {
+    const onMessage = (
+      message: unknown,
+    ) => {
+      const msg = message as {
+        type?: string
+        payload?: { fieldId?: string; fieldLabel?: string; detectedAt?: string }
+      }
+
+      if (msg.type !== 'FIELD_DETECTED' || !msg.payload?.fieldLabel) return
+
+      const next: DetectedField = {
+        id: msg.payload.fieldId ?? crypto.randomUUID(),
+        label: msg.payload.fieldLabel,
+        at: msg.payload.detectedAt ?? new Date().toISOString(),
+      }
+
+      setDetectedFields(prev => [next, ...prev].slice(0, 12))
+    }
+
+    chrome.runtime.onMessage.addListener(onMessage)
+    return () => chrome.runtime.onMessage.removeListener(onMessage)
+  }, [])
 
   function patchFile(name: string, patch: Partial<FileEntry>) {
     setFiles(prev => prev.map(f => f.name === name ? { ...f, ...patch } : f))
@@ -240,6 +271,21 @@ export default function SidePanel() {
       {hasFolder && files.length === 0 && !busy && (
         <p style={styles.empty}>No supported files found in this folder.</p>
       )}
+
+      <div style={styles.feedSection}>
+        <h2 style={styles.feedTitle}>Detected Fields (Milestone 6)</h2>
+        {detectedFields.length === 0 ? (
+          <p style={styles.feedEmpty}>Focus any form field to see live detection.</p>
+        ) : (
+          <ul style={styles.feedList}>
+            {detectedFields.map(item => (
+              <li key={`${item.id}-${item.at}`} style={styles.feedItem}>
+                Detected: {item.label}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }
@@ -327,4 +373,35 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
   },
   subtext: { fontSize: '11px', color: '#888', marginTop: '1px' },
+  feedSection: {
+    marginTop: '14px',
+    borderTop: '1px solid #ececec',
+    paddingTop: '10px',
+  },
+  feedTitle: {
+    margin: 0,
+    fontSize: '12px',
+    color: '#444',
+    fontWeight: 700,
+  },
+  feedEmpty: {
+    margin: '8px 0 0',
+    fontSize: '12px',
+    color: '#777',
+  },
+  feedList: {
+    margin: '8px 0 0',
+    padding: 0,
+    listStyle: 'none',
+    maxHeight: '140px',
+    overflowY: 'auto',
+  },
+  feedItem: {
+    fontSize: '12px',
+    color: '#111',
+    background: '#f7f7f7',
+    borderRadius: '4px',
+    padding: '6px 8px',
+    marginBottom: '6px',
+  },
 }
