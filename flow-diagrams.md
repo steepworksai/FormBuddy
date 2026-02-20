@@ -218,8 +218,78 @@ flowchart TD
     M --> J
     L -->|"Valid"| N["Encrypt key and store in chrome.storage.local\nsandboxed to this extension only"]
 
+---
+
+## 7. End-to-End Sequence Diagram (Current Flow)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as "User"
+    participant SP as "SidePanel UI"
+    participant BG as "Background Worker"
+    participant CS as "Content Script"
+    participant IDX as ".indexing Store"
+    participant LLM as "LLM Provider (Claude/OpenAI/Gemini)"
+    participant TAB as "Active Web Form Tab"
+
+    U->>SP: Choose folder / change folder
+    SP->>IDX: Read files + manifest
+    loop "Per file"
+        SP->>BG: Index request (via indexer pipeline)
+        BG->>IDX: Read checksum / previous entries
+        alt "Changed or new file"
+            BG->>BG: Parse PDF or OCR/image extraction
+            alt "API key present"
+                BG->>LLM: Search-index + extraction prompts
+                LLM-->>BG: Structured fields/autofill/entities
+            end
+            BG->>IDX: Write document index + search index + manifest
+        else "Unchanged"
+            BG-->>SP: Skip indexing
+        end
+    end
+    SP->>BG: CONTEXT_UPDATED (selected docs only)
+
+    U->>TAB: Open a webpage form
+    TAB->>CS: Page loads
+    CS->>BG: FORM_SCHEMA (best-effort snapshot)
+
+    U->>SP: Paste field list in "Fields From Doc"
+    U->>SP: Click "Fetch Fields From Doc"
+    SP->>BG: MANUAL_FIELD_FETCH {fields[]}
+
+    alt "API key present"
+        BG->>BG: Build docs payload (search index + parsed fallback)
+        BG->>LLM: One bulk mapping call for requested fields
+        LLM-->>BG: Field-value mappings + confidence
+    else "No API key"
+        BG->>BG: Local deterministic matching only
+    end
+
+    BG->>BG: Fill unmatched items via local fallback
+    BG-->>SP: Fetch response {results[], reason?}
+    SP-->>U: Render result cards with Copy buttons
+
+    U->>SP: Click Copy
+    SP-->>U: Value copied to clipboard
+
+    opt "Optional hover/focus autofill flow"
+        U->>TAB: Focus form field
+        CS->>BG: FIELD_FOCUSED
+        BG->>IDX: Query indexed context
+        BG->>LLM: Suggestion ranking (if API key)
+        LLM-->>BG: Suggested value
+        BG-->>CS: NEW_SUGGESTION
+        CS-->>U: Top overlay suggestion (Fill / Dismiss / Space copy)
+        U->>CS: Fill
+        CS->>TAB: Set input value + dispatch events
+        CS->>BG: SUGGESTION_ACCEPTED
+        BG->>IDX: Update usage state
+    end
+```
+
     N --> O["Extension is ready to make LLM calls"]
     O --> P["User controls spending via provider dashboard"]
     P --> Q["FormBuddy never sees billing or payment details"]
 ```
-

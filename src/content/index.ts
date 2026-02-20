@@ -19,6 +19,13 @@ let hoverSuggestionCard: HTMLDivElement | null = null
 let hoverCardCloseTimer: number | null = null
 let lastSelectionText = ''
 let currentHoverSuggestionValue = ''
+let lastFormSchemaSignature = ''
+let formSchemaTimer: number | null = null
+
+interface FormSchemaSnapshot {
+  fields: FieldFocusedPayload[]
+  signature: string
+}
 
 function safeRuntimeSendMessage(message: unknown): void {
   try {
@@ -70,6 +77,12 @@ function getFieldLabel(el: FieldElement): string {
 
 function getFieldId(el: FieldElement, fieldLabel: string): string {
   return normalize(el.id) || normalize(el.name) || fieldLabel
+}
+
+function humanizeIdentifier(value: string): string {
+  return normalize(value)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase())
 }
 
 function buildPayload(el: FieldElement): FieldFocusedPayload | null {
@@ -135,6 +148,60 @@ function sendFieldLookup(el: FieldElement): void {
     type: 'FIELD_FOCUSED',
     payload,
   })
+}
+
+function buildFormSchemaSnapshot(): FormSchemaSnapshot | null {
+  const elements = Array.from(document.querySelectorAll('input, textarea, select'))
+  const fields: FieldFocusedPayload[] = []
+  const seen = new Set<string>()
+
+  for (const element of elements) {
+    if (!isFieldElement(element)) continue
+    const primaryLabel = getFieldLabel(element)
+    const fallbackLabel =
+      humanizeIdentifier(element.name) ||
+      humanizeIdentifier(element.id) ||
+      ('placeholder' in element ? humanizeIdentifier((element as HTMLInputElement | HTMLTextAreaElement).placeholder) : '') ||
+      'Field'
+    const fieldLabel =
+      primaryLabel && fallbackLabel && primaryLabel.toLowerCase() !== fallbackLabel.toLowerCase()
+        ? `${primaryLabel} (${fallbackLabel})`
+        : (primaryLabel || fallbackLabel)
+    const fieldId = getFieldId(element, fieldLabel)
+    const payload: FieldFocusedPayload = {
+      fieldId,
+      fieldLabel,
+      tagName: element.tagName,
+    }
+    const key = payload.fieldId.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    fields.push(payload)
+  }
+
+  if (!fields.length) return null
+  const signature = fields.map(field => `${field.fieldId}:${field.fieldLabel}`).join('|')
+  return { fields, signature }
+}
+
+function sendFormSchema(): void {
+  const snapshot = buildFormSchemaSnapshot()
+  if (!snapshot) return
+  const { fields, signature } = snapshot
+  if (signature === lastFormSchemaSignature) return
+  lastFormSchemaSignature = signature
+  safeRuntimeSendMessage({
+    type: 'FORM_SCHEMA',
+    payload: { fields },
+  })
+}
+
+function scheduleFormSchemaSend(delayMs = 350): void {
+  if (formSchemaTimer !== null) window.clearTimeout(formSchemaTimer)
+  formSchemaTimer = window.setTimeout(() => {
+    formSchemaTimer = null
+    sendFormSchema()
+  }, delayMs)
 }
 
 function getCurrentSelectionText(): string {
@@ -276,6 +343,7 @@ document.addEventListener('focusin', (event) => {
 
   lastFocusedEl = event.target
   sendFieldLookup(event.target)
+  scheduleFormSchemaSend(0)
 })
 
 document.addEventListener('mouseover', (event) => {
@@ -312,7 +380,13 @@ document.addEventListener('keyup', () => {
   sendSelectionForSearch()
 })
 
-chrome.runtime.onMessage.addListener((message: unknown) => {
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => scheduleFormSchemaSend(0), { once: true })
+} else {
+  scheduleFormSchemaSend(0)
+}
+
+chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
   const msg = message as {
     type?: string
     payload?: {
@@ -332,6 +406,22 @@ chrome.runtime.onMessage.addListener((message: unknown) => {
   if (msg.type === 'AUTOFILL_FIELD') {
     if (!lastFocusedEl) return
     fillField(lastFocusedEl, msg.payload?.value ?? '')
+    return
+  }
+
+  if (msg.type === 'REQUEST_FORM_SCHEMA') {
+    const snapshot = buildFormSchemaSnapshot()
+    if (snapshot) {
+      const { fields, signature } = snapshot
+      lastFormSchemaSignature = signature
+      safeRuntimeSendMessage({
+        type: 'FORM_SCHEMA',
+        payload: { fields },
+      })
+      sendResponse({ ok: true, fields })
+    } else {
+      sendResponse({ ok: false, fields: [] })
+    }
     return
   }
 

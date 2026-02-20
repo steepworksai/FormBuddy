@@ -5,7 +5,8 @@ type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp'
 
 const VISION_PROMPT =
   'Extract all text from this image exactly as it appears. ' +
-  'Preserve structure, numbers, dates, and special characters. ' +
+  'Preserve line breaks, structure, numbers, dates, and special characters. ' +
+  'Keep label/value pairs on separate lines when present. ' +
   'Return only the extracted text — no commentary, no markdown.'
 
 /**

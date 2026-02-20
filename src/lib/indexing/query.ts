@@ -78,6 +78,34 @@ export function queryIndex(
   const candidates: QueryCandidate[] = []
 
   for (const entry of entries) {
+    // -1) Autofill object lookup (highest-priority normalized values)
+    for (const [key, value] of Object.entries(entry.searchIndex?.autofill ?? {})) {
+      const autoScore = scoreText(key, tokens) * 4 + scoreText(value, tokens) * 2
+      if (autoScore <= 0) continue
+      candidates.push({
+        documentId: entry.id,
+        fileName: entry.fileName,
+        sourcePage: 1,
+        sourceText: value,
+        score: autoScore + 10,
+      })
+    }
+
+    // 0) Enriched search index lookup (LLM-derived)
+    for (const item of entry.searchIndex?.items ?? []) {
+      const aliasScore = (item.aliases ?? []).reduce((acc, alias) => acc + scoreText(alias, tokens), 0)
+      const itemScore = scoreText(item.fieldLabel, tokens) * 3 + scoreText(item.value, tokens) * 2 + aliasScore
+      if (itemScore <= 0) continue
+
+      candidates.push({
+        documentId: entry.id,
+        fileName: entry.fileName,
+        sourcePage: 1,
+        sourceText: item.sourceText || item.value,
+        score: itemScore + 6,
+      })
+    }
+
     // 1) Entity-first lookup
     const buckets = getEntityBucketsForTokens(tokens)
     for (const bucket of buckets) {

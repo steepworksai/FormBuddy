@@ -72,6 +72,38 @@ export interface DocumentIndex {
   entities: Record<string, string[]>;
   summary: string;
   usedFields: UsedField[];
+  searchIndex?: SearchIndexFile;
+}
+
+export interface SearchIndexItem {
+  fieldLabel: string;
+  value: string;
+  aliases: string[];
+  sourceText: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface SearchIndexFile {
+  version: string;
+  generatedAt: string;
+  items: SearchIndexItem[];
+  autofill?: Record<string, string>;
+}
+
+export interface FormKVMapping {
+  fieldId: string;
+  fieldLabel: string;
+  value: string;
+  sourceFile: string;
+  reason: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface FormKVCacheFile {
+  version: string;
+  signature: string;
+  generatedAt: string;
+  mappings: FormKVMapping[];
 }
 
 export interface ManifestEntry {
@@ -79,6 +111,7 @@ export interface ManifestEntry {
   fileName: string;
   type: string;
   indexFile: string;
+  searchIndexFile?: string;
   checksum: string;
   sizeBytes: number;
   indexedAt: string;

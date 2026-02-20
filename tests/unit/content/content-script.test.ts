@@ -104,7 +104,8 @@ describe('TM4 content script behavior', () => {
     dispatchFocus(input)
     dispatchFocus(input)
 
-    expect(sendMessageMock).toHaveBeenCalledTimes(1)
+    const focusedCalls = sendMessageMock.mock.calls.filter(call => call[0]?.type === 'FIELD_FOCUSED')
+    expect(focusedCalls).toHaveLength(1)
   })
 
   it('autofills focused input and dispatches input/change events', async () => {

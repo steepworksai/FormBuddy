@@ -39,6 +39,9 @@ const manifest = defineManifest({
     page: 'src/popup/index.html',
     open_in_tab: true,
   },
+  content_security_policy: {
+    extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
+  },
   icons: {
     '16': 'icons/icon16.png',
     '48': 'icons/icon48.png',

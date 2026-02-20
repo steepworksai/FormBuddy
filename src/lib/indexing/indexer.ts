@@ -4,15 +4,18 @@ import {
   writeManifest,
   readIndexEntry,
   writeIndexEntry,
+  readSearchIndexEntry,
+  writeSearchIndexEntry,
   buildManifestEntry,
 } from './manifest'
 import { extractTextFromPDF, PDFTooLargeError } from '../parser/pdf'
 import { extractTextFromImage, ocrCanvases } from '../parser/ocr'
 import { extractEntitiesWithLLM } from '../llm/extractor'
 import { organizeFieldsWithLLM } from '../llm/fieldOrganizer'
+import { buildSearchIndexWithLLM } from '../llm/searchIndex'
 import { extractFieldsFromRawText } from './fieldExtract'
 import { getTypeInfo } from '../config/supportedTypes'
-import type { DocumentIndex, FieldEntry, LLMConfig, PageEntry } from '../../types'
+import type { DocumentIndex, FieldEntry, LLMConfig, PageEntry, SearchIndexFile } from '../../types'
 
 export type IndexResult =
   | { status: 'indexed'; entry: DocumentIndex }
@@ -21,6 +24,20 @@ export type IndexResult =
   | { status: 'too-large'; fileName: string; pageCount: number }
 
 export type IndexPhase = 'parsing' | 'ocr' | 'extracting' | 'writing'
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message
+  if (typeof err === 'string') return err
+  if (err && typeof err === 'object' && 'message' in err) {
+    const maybeMessage = (err as { message?: unknown }).message
+    if (typeof maybeMessage === 'string' && maybeMessage.trim().length > 0) return maybeMessage
+  }
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
+}
 
 function dedupeFields(fields: FieldEntry[]): FieldEntry[] {
   const seen = new Set<string>()
@@ -49,6 +66,9 @@ export async function indexDocument(
 
   const existing = manifest.documents.find(d => d.fileName === file.name)
   const previousEntry = existing ? await readIndexEntry(dirHandle, `${existing.id}.json`) : null
+  const previousSearchIndex = existing?.searchIndexFile
+    ? await readSearchIndexEntry(dirHandle, existing.searchIndexFile)
+    : null
   const llmAlreadyPrepared =
     existing?.llmPrepared === true ||
     !!(
@@ -82,7 +102,7 @@ export async function indexDocument(
         console.warn(`[FormBuddy] PDF too large: ${file.name} (${err.pageCount} pages)`)
         return { status: 'too-large', fileName: file.name, pageCount: err.pageCount }
       }
-      throw err
+      throw new Error(`PDF parse error: ${errorMessage(err)}`)
     }
 
     // ── Phase 2 (conditional): OCR scanned pages ──────────
@@ -148,6 +168,7 @@ export async function indexDocument(
 
   let entities: Record<string, string[]> = {}
   let summary = ''
+  let searchIndex: SearchIndexFile | undefined = previousSearchIndex ?? undefined
 
   let llmPreparedThisRun = false
   if (llmConfig?.apiKey && !llmAlreadyPrepared) {
@@ -170,6 +191,20 @@ export async function indexDocument(
       console.log(`[FormBuddy] LLM already prepared — skipping LLM reindex for ${file.name}`)
     } else {
       console.log(`[FormBuddy] No LLM config — skipping entity extraction for ${file.name}`)
+    }
+  }
+
+  if (llmConfig?.apiKey) {
+    try {
+      const allFields = pages.flatMap(page => page.fields)
+      const fullText = pages.map(p => p.rawText).join('\n')
+      const generatedSearchIndex = await buildSearchIndexWithLLM(fullText, allFields, file.name, llmConfig)
+      if (generatedSearchIndex.items.length > 0 || Object.keys(generatedSearchIndex.autofill ?? {}).length > 0) {
+        searchIndex = generatedSearchIndex
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn(`[FormBuddy] Search index generation failed for ${file.name}:`, message)
     }
   }
 
@@ -199,13 +234,23 @@ export async function indexDocument(
   }
 
   await writeIndexEntry(dirHandle, `${id}.json`, indexEntry)
+  const searchIndexFile = `${id}.search.index.json`
+  if (searchIndex) {
+    await writeSearchIndexEntry(dirHandle, searchIndexFile, searchIndex)
+  }
 
   const updatedManifest = {
     ...manifest,
     lastUpdated: new Date().toISOString(),
     documents: [
       ...manifest.documents.filter(d => d.fileName !== file.name),
-      buildManifestEntry(indexEntry, checksum, file.size, llmAlreadyPrepared || llmPreparedThisRun),
+      buildManifestEntry(
+        indexEntry,
+        checksum,
+        file.size,
+        llmAlreadyPrepared || llmPreparedThisRun,
+        searchIndex ? searchIndexFile : undefined
+      ),
     ],
   }
   await writeManifest(dirHandle, updatedManifest)

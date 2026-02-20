@@ -2,11 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { requestFolderAccess, listFiles } from '../lib/folder/access'
 import { writeFileToFolder } from '../lib/folder/access'
 import { indexDocument } from '../lib/indexing/indexer'
-import { readIndexEntry, readManifest, writeManifest } from '../lib/indexing/manifest'
+import {
+  readFormKVCacheEntry,
+  readIndexEntry,
+  readManifest,
+  readSearchIndexEntry,
+  writeFormKVCacheEntry,
+  writeManifest,
+} from '../lib/indexing/manifest'
 import { getTypeInfo } from '../lib/config/supportedTypes'
 import { isSupported } from '../lib/config/supportedTypes'
 import { MAX_PDF_PAGES } from '../lib/parser/pdf'
-import type { DocumentIndex, LLMConfig } from '../types'
+import type { DocumentIndex, FormKVMapping, LLMConfig } from '../types'
 import type { IndexPhase } from '../lib/indexing/indexer'
 
 interface FileEntry {
@@ -25,6 +32,36 @@ interface LookupResult {
   sourceFile: string
   sourcePage?: number
   sourceText: string
+}
+
+interface ManualFieldResult {
+  id: string
+  fieldLabel: string
+  value: string
+  sourceFile: string
+  sourcePage?: number
+}
+
+function getErrorMessage(err: unknown, fallback = 'Unknown error'): string {
+  if (err instanceof Error && err.message) return err.message
+  if (typeof err === 'string') return err
+  if (err && typeof err === 'object' && 'message' in err) {
+    const maybeMessage = (err as { message?: unknown }).message
+    if (typeof maybeMessage === 'string' && maybeMessage.trim().length > 0) return maybeMessage
+  }
+  try {
+    const serialized = JSON.stringify(err)
+    return serialized === undefined ? fallback : serialized
+  } catch {
+    return fallback
+  }
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const enc = new TextEncoder()
+  const data = enc.encode(input)
+  const digest = await crypto.subtle.digest('SHA-256', data)
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 function formatSize(bytes: number): string {
@@ -123,7 +160,12 @@ async function markAllForReindex(dirHandle: FileSystemDirectoryHandle): Promise<
   const manifest = await readManifest(dirHandle)
   await writeManifest(dirHandle, {
     ...manifest,
-    documents: manifest.documents.map(d => ({ ...d, needsReindex: d.llmPrepared ? false : true })),
+    documents: manifest.documents.map(d => ({
+      ...d,
+      // Refresh should not rebuild already LLM-prepared documents.
+      // Only documents that never had LLM prep are marked for reindex.
+      needsReindex: d.llmPrepared ? false : true,
+    })),
   })
 }
 
@@ -143,6 +185,10 @@ export default function SidePanel() {
   const [quickNote, setQuickNote] = useState('')
   const [dropActive, setDropActive] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
+  const [fieldsToFetch, setFieldsToFetch] = useState('')
+  const [manualFetchBusy, setManualFetchBusy] = useState(false)
+  const [manualFieldResults, setManualFieldResults] = useState<ManualFieldResult[]>([])
+  const [manualCopiedId, setManualCopiedId] = useState<string | null>(null)
 
   // Persist between renders without triggering re-renders
   const dirHandleRef       = useRef<FileSystemDirectoryHandle | null>(null)
@@ -164,6 +210,8 @@ export default function SidePanel() {
   useEffect(() => {
     const onMessage = (
       message: unknown,
+      _sender: chrome.runtime.MessageSender,
+      sendResponse: (response?: unknown) => void,
     ) => {
       const msg = message as {
         type?: string
@@ -174,6 +222,14 @@ export default function SidePanel() {
           content?: string
           message?: string
           text?: string
+          signature?: string
+          mappings?: FormKVMapping[]
+          status?: 'idle' | 'running' | 'ready' | 'error'
+          count?: number
+          cached?: boolean
+          generatedAt?: string
+          reason?: string
+          stage?: string
         }
       }
 
@@ -204,10 +260,56 @@ export default function SidePanel() {
       if (msg.type === 'APP_ERROR' && typeof msg.payload?.message === 'string') {
         setError(msg.payload.message)
       }
+
+      if (msg.type === 'FORM_KV_CACHE_GET' && typeof msg.payload?.signature === 'string') {
+        const dirHandle = dirHandleRef.current
+        if (!dirHandle) {
+          sendResponse({ ok: false, reason: 'no-folder' })
+          return true
+        }
+        void (async () => {
+          try {
+            const hash = await sha256Hex(msg.payload?.signature ?? '')
+            const cacheFile = `${hash}.json`
+            const cached = await readFormKVCacheEntry(dirHandle, cacheFile)
+            sendResponse({ ok: true, cached: cached?.mappings ?? null })
+          } catch {
+            sendResponse({ ok: false, reason: 'read-failed' })
+          }
+        })()
+        return true
+      }
+
+      if (msg.type === 'FORM_KV_CACHE_SET' && typeof msg.payload?.signature === 'string') {
+        const dirHandle = dirHandleRef.current
+        if (!dirHandle) {
+          sendResponse({ ok: false, reason: 'no-folder' })
+          return true
+        }
+        void (async () => {
+          try {
+            const mappings = (msg.payload?.mappings ?? []) as FormKVMapping[]
+            const hash = await sha256Hex(msg.payload?.signature ?? '')
+            const cacheFile = `${hash}.json`
+            await writeFormKVCacheEntry(dirHandle, cacheFile, {
+              version: '1.0',
+              signature: msg.payload?.signature ?? '',
+              generatedAt: new Date().toISOString(),
+              mappings,
+            })
+            sendResponse({ ok: true })
+          } catch {
+            sendResponse({ ok: false, reason: 'write-failed' })
+          }
+        })()
+        return true
+      }
     }
 
     chrome.runtime.onMessage.addListener(onMessage)
-    return () => chrome.runtime.onMessage.removeListener(onMessage)
+    return () => {
+      chrome.runtime.onMessage.removeListener(onMessage)
+    }
   }, [])
 
   useEffect(() => {
@@ -251,7 +353,7 @@ export default function SidePanel() {
     setSelectedFiles(new Set())
   }
 
-  async function syncContextToBackground(dirHandle: FileSystemDirectoryHandle): Promise<void> {
+  async function syncContextToBackground(dirHandle: FileSystemDirectoryHandle): Promise<DocumentIndex[]> {
     const manifest = await readManifest(dirHandle)
     const documents: DocumentIndex[] = []
     const filter = selectedFilesRef.current
@@ -260,7 +362,12 @@ export default function SidePanel() {
       // When the user has checked specific files, only include those
       if (filter.size > 0 && !filter.has(doc.fileName)) continue
       const entry = await readIndexEntry(dirHandle, doc.indexFile)
-      if (entry) documents.push(entry)
+      if (!entry) continue
+      if (doc.searchIndexFile) {
+        const searchIndex = await readSearchIndexEntry(dirHandle, doc.searchIndexFile)
+        if (searchIndex) entry.searchIndex = searchIndex
+      }
+      documents.push(entry)
     }
     setIndexedDocs(documents)
 
@@ -268,6 +375,8 @@ export default function SidePanel() {
       type: 'CONTEXT_UPDATED',
       payload: { documents },
     })
+
+    return documents
   }
 
   /** Core indexing loop — called by both the folder button and the refresh button. */
@@ -298,7 +407,7 @@ export default function SidePanel() {
           })
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Unknown error'
+        const msg = getErrorMessage(err)
         patchFile(file.name, { status: 'error', error: msg, phase: undefined })
       }
     }
@@ -410,6 +519,51 @@ export default function SidePanel() {
     const scored: Array<LookupResult & { score: number }> = []
 
     for (const doc of indexedDocs) {
+      if (doc.searchIndex?.autofill) {
+        for (const [key, value] of Object.entries(doc.searchIndex.autofill)) {
+          const keyReadable = key.replace(/_/g, ' ')
+          const keyScore = tokens.reduce((acc, token) => acc + (keyReadable.includes(token) ? 4 : 0), 0)
+          const valueScore = tokens.reduce((acc, token) => acc + (value.toLowerCase().includes(token) ? 2 : 0), 0)
+          const score = keyScore + valueScore
+          if (!score) continue
+
+          scored.push({
+            id: `${doc.id}-autofill-${key}-${value}`,
+            label: keyReadable.replace(/\b\w/g, c => c.toUpperCase()),
+            value,
+            sourceFile: doc.fileName,
+            sourcePage: 1,
+            sourceText: keyReadable,
+            score: score + 40,
+          })
+        }
+      }
+
+      if (doc.searchIndex?.items?.length) {
+        for (const item of doc.searchIndex.items) {
+          const label = item.fieldLabel.toLowerCase()
+          const value = item.value.toLowerCase()
+          const aliasScore = (item.aliases ?? []).reduce(
+            (acc, alias) => acc + tokens.reduce((inner, token) => inner + (alias.toLowerCase().includes(token) ? 1 : 0), 0),
+            0
+          )
+          const labelScore = tokens.reduce((acc, token) => acc + (label.includes(token) ? 3 : 0), 0)
+          const valueScore = tokens.reduce((acc, token) => acc + (value.includes(token) ? 2 : 0), 0)
+          const score = labelScore + valueScore + aliasScore
+          if (!score) continue
+
+          scored.push({
+            id: `${doc.id}-search-${item.fieldLabel}-${item.value}`,
+            label: item.fieldLabel,
+            value: item.value,
+            sourceFile: doc.fileName,
+            sourcePage: 1,
+            sourceText: item.sourceText || item.value,
+            score: score + 30,
+          })
+        }
+      }
+
       for (const page of doc.pages) {
         for (const field of page.fields) {
           const label = field.label.toLowerCase()
@@ -506,7 +660,7 @@ export default function SidePanel() {
       setTimeout(() => setScreenshotStatus('idle'), 2500)
     } catch (err) {
       setScreenshotStatus('error')
-      setError(err instanceof Error ? err.message : 'Failed to capture screenshot.')
+      setError(getErrorMessage(err, 'Failed to capture screenshot.'))
       setTimeout(() => setScreenshotStatus('idle'), 2500)
     }
   }
@@ -550,7 +704,7 @@ export default function SidePanel() {
       patchFile(file.name, {
         status: 'error',
         phase: undefined,
-        error: err instanceof Error ? err.message : 'Failed to add file.',
+        error: getErrorMessage(err, 'Failed to add file.'),
       })
     }
   }
@@ -591,6 +745,83 @@ export default function SidePanel() {
     await addFileToContext(noteFile)
 
     if (!fromQuickAdd) setQuickNote('')
+  }
+
+  function parseRequestedFields(input: string): string[] {
+    return input
+      .split(/\n|,/)
+      .map(v => v.trim())
+      .filter(Boolean)
+      .slice(0, 25)
+  }
+
+  async function handleManualFieldFetch(): Promise<void> {
+    const fields = parseRequestedFields(fieldsToFetch)
+    if (!fields.length) {
+      setError('Paste one or more field names to fetch.')
+      return
+    }
+    const dirHandle = dirHandleRef.current
+    if (!dirHandle) {
+      setError('Choose a folder first.')
+      return
+    }
+
+    setManualFetchBusy(true)
+    setError(null)
+    try {
+      const syncedDocs = await syncContextToBackground(dirHandle)
+      if (!syncedDocs.length) {
+        setError('No indexed documents are selected.')
+        setManualFieldResults([])
+        return
+      }
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'MANUAL_FIELD_FETCH',
+        payload: { fields },
+      }) as {
+        ok?: boolean
+        message?: string
+        reason?: string
+        results?: Array<{
+          fieldLabel: string
+          value: string
+          sourceFile: string
+          sourcePage?: number
+        }>
+      } | undefined
+      if (!response?.ok) {
+        setError(response?.message || 'Could not fetch fields from selected docs.')
+        setManualFieldResults([])
+        return
+      }
+      const results = (response.results ?? []).map((item, idx) => ({
+        id: `${item.fieldLabel}-${item.value}-${idx}`,
+        fieldLabel: item.fieldLabel,
+        value: item.value,
+        sourceFile: item.sourceFile,
+        sourcePage: item.sourcePage,
+      }))
+      setManualFieldResults(results)
+      if (!results.length) {
+        setError(response.reason || 'No matching values found for the requested fields.')
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to fetch fields from docs.'))
+    } finally {
+      setManualFetchBusy(false)
+    }
+  }
+
+  async function copyManualFieldValue(item: ManualFieldResult): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(item.value)
+      setManualCopiedId(item.id)
+      setTimeout(() => setManualCopiedId(null), 1200)
+    } catch {
+      setError('Clipboard copy failed. Please copy manually.')
+    }
   }
 
   return (
@@ -662,7 +893,7 @@ export default function SidePanel() {
       {/* Warnings / feedback */}
       {noLLM && (
         <div style={styles.warningBox}>
-          <span>⚠️ No API key set — entities won't be extracted.</span>
+          <span>⚠️ No API key set — extraction may not be clean.</span>
           <button style={styles.inlineBtn} onClick={openSettings}>Configure →</button>
         </div>
       )}
@@ -713,6 +944,41 @@ export default function SidePanel() {
 
       {hasFolder && files.length === 0 && !busy && (
         <p style={styles.empty}>No supported files in this folder yet.</p>
+      )}
+
+      {hasFolder && (
+        <div style={styles.panelCard}>
+          <h2 style={styles.sectionTitle}>Fields From Doc</h2>
+          <textarea
+            style={styles.noteInput}
+            value={fieldsToFetch}
+            onChange={e => setFieldsToFetch(e.target.value)}
+            placeholder="Paste field names from form (one per line), for example:\nDriver License Number\nIssue Date\nExpiration Date"
+          />
+          <button
+            style={{ ...styles.noteSaveBtn, marginTop: '8px' }}
+            onClick={() => void handleManualFieldFetch()}
+            disabled={!hasFolder || manualFetchBusy}
+          >
+            {manualFetchBusy ? 'Fetching...' : 'Fetch Fields From Doc'}
+          </button>
+          {manualFieldResults.length > 0 && (
+            <ul style={styles.feedList}>
+              {manualFieldResults.map(item => (
+                <li key={item.id} style={styles.lookupItem}>
+                  <p style={styles.lookupLabel}>{item.fieldLabel}</p>
+                  <p style={styles.lookupValue}>{item.value}</p>
+                  <p style={styles.lookupSource}>
+                    From: {item.sourceFile}{item.sourcePage ? `, Page ${item.sourcePage}` : ''}
+                  </p>
+                  <button style={styles.copyBtn} onClick={() => void copyManualFieldValue(item)}>
+                    {manualCopiedId === item.id ? 'Copied' : 'Copy'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       {hasFolder && (
@@ -1016,6 +1282,41 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#2563eb',
     color: '#fff',
     cursor: 'pointer',
+    fontWeight: 600,
+  },
+  mappingStatusBar: {
+    marginTop: '8px',
+    border: '1px solid #d1d5db',
+    borderRadius: '6px',
+    padding: '8px',
+    fontSize: '12px',
+    color: '#374151',
+    background: '#f9fafb',
+  },
+  mappingStatusRunning: {
+    borderColor: '#93c5fd',
+    background: '#eff6ff',
+    color: '#1d4ed8',
+  },
+  mappingStatusReady: {
+    borderColor: '#86efac',
+    background: '#ecfdf5',
+    color: '#166534',
+  },
+  mappingStatusError: {
+    borderColor: '#fca5a5',
+    background: '#fef2f2',
+    color: '#b91c1c',
+  },
+  mappingMetaRow: {
+    marginTop: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  mappingMetaText: {
+    fontSize: '12px',
+    color: '#374151',
     fontWeight: 600,
   },
 }

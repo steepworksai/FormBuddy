@@ -92,12 +92,16 @@ async function loadBackgroundWithMocks(options?: {
 
   const queryIndexMock = vi.fn(() => queryCandidates)
   const generateSuggestionWithLLMMock = vi.fn(async () => suggestion)
+  const buildFormAutofillMapWithLLMMock = vi.fn(async () => [])
 
   vi.doMock('../../../src/lib/indexing/query', () => ({
     queryIndex: queryIndexMock,
   }))
   vi.doMock('../../../src/lib/llm/suggestion', () => ({
     generateSuggestionWithLLM: generateSuggestionWithLLMMock,
+  }))
+  vi.doMock('../../../src/lib/llm/formMapper', () => ({
+    buildFormAutofillMapWithLLM: buildFormAutofillMapWithLLMMock,
   }))
 
   const chromeState = createChromeMock(
@@ -111,6 +115,7 @@ async function loadBackgroundWithMocks(options?: {
 async function flushAsync() {
   await Promise.resolve()
   await Promise.resolve()
+  await new Promise(resolve => setTimeout(resolve, 0))
 }
 
 const sampleDoc = {

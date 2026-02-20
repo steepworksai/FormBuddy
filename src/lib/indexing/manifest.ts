@@ -1,7 +1,14 @@
-import type { Manifest, DocumentIndex, ManifestEntry } from '../../types'
+import type {
+  Manifest,
+  DocumentIndex,
+  ManifestEntry,
+  SearchIndexFile,
+  FormKVCacheFile,
+} from '../../types'
 
 const INDEXING_DIR = '.indexing'
 const MANIFEST_FILE = 'manifest.json'
+const FORM_KV_DIR = 'form-kv'
 
 async function getIndexingDir(
   dirHandle: FileSystemDirectoryHandle
@@ -66,13 +73,68 @@ export async function writeIndexEntry(
   await writable.close()
 }
 
+export async function readSearchIndexEntry(
+  dirHandle: FileSystemDirectoryHandle,
+  indexFile: string
+): Promise<SearchIndexFile | null> {
+  try {
+    const indexingDir = await getIndexingDir(dirHandle)
+    const fileHandle = await indexingDir.getFileHandle(indexFile)
+    const file = await fileHandle.getFile()
+    return JSON.parse(await file.text()) as SearchIndexFile
+  } catch {
+    return null
+  }
+}
+
+export async function writeSearchIndexEntry(
+  dirHandle: FileSystemDirectoryHandle,
+  indexFile: string,
+  entry: SearchIndexFile
+): Promise<void> {
+  const indexingDir = await getIndexingDir(dirHandle)
+  const fileHandle = await indexingDir.getFileHandle(indexFile, { create: true })
+  const writable = await fileHandle.createWritable()
+  await writable.write(JSON.stringify(entry, null, 2))
+  await writable.close()
+}
+
+export async function readFormKVCacheEntry(
+  dirHandle: FileSystemDirectoryHandle,
+  cacheFile: string
+): Promise<FormKVCacheFile | null> {
+  try {
+    const indexingDir = await getIndexingDir(dirHandle)
+    const kvDir = await indexingDir.getDirectoryHandle(FORM_KV_DIR, { create: true })
+    const fileHandle = await kvDir.getFileHandle(cacheFile)
+    const file = await fileHandle.getFile()
+    return JSON.parse(await file.text()) as FormKVCacheFile
+  } catch {
+    return null
+  }
+}
+
+export async function writeFormKVCacheEntry(
+  dirHandle: FileSystemDirectoryHandle,
+  cacheFile: string,
+  entry: FormKVCacheFile
+): Promise<void> {
+  const indexingDir = await getIndexingDir(dirHandle)
+  const kvDir = await indexingDir.getDirectoryHandle(FORM_KV_DIR, { create: true })
+  const fileHandle = await kvDir.getFileHandle(cacheFile, { create: true })
+  const writable = await fileHandle.createWritable()
+  await writable.write(JSON.stringify(entry, null, 2))
+  await writable.close()
+}
+
 export function buildManifestEntry(
   entry: DocumentIndex,
   checksum: string,
   sizeBytes: number,
-  llmPrepared: boolean
+  llmPrepared: boolean,
+  searchIndexFile?: string
 ): ManifestEntry {
-  return {
+  const manifestEntry: ManifestEntry = {
     id: entry.id,
     fileName: entry.fileName,
     type: entry.type,
@@ -84,4 +146,6 @@ export function buildManifestEntry(
     llmPrepared,
     needsReindex: false,
   }
+  if (searchIndexFile) manifestEntry.searchIndexFile = searchIndexFile
+  return manifestEntry
 }
