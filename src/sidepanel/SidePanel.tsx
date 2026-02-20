@@ -66,6 +66,69 @@ async function loadLLMConfig(): Promise<LLMConfig | undefined> {
   })
 }
 
+function isBrowserInternalUrl(url: string | undefined): boolean {
+  if (!url) return false
+  return /^(chrome|chrome-extension|edge|about):/i.test(url)
+}
+
+async function captureVisibleTabPng(): Promise<Blob> {
+  const tabsInWindow = await chrome.tabs.query({ currentWindow: true })
+  const activeTab = tabsInWindow.find(tab => tab.active)
+  if (!activeTab || activeTab.windowId === undefined) {
+    throw new Error('No active tab found. Open the target page and try again.')
+  }
+
+  // If the currently active tab is an internal page, switch to a capture-eligible tab.
+  let targetTab = activeTab
+  if (isBrowserInternalUrl(targetTab.url)) {
+    const fallback = tabsInWindow.find(
+      tab => tab.id && !isBrowserInternalUrl(tab.url) && tab.windowId === activeTab.windowId
+    )
+    if (!fallback?.id) {
+      throw new Error('Screenshots are blocked on browser internal pages. Open a website form and try again.')
+    }
+    await chrome.tabs.update(fallback.id, { active: true })
+    targetTab = fallback
+  }
+
+  let dataUrl = ''
+  try {
+    dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, { format: 'png' })
+  } catch {
+    // Fallback for environments where window-scoped capture fails.
+    dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' })
+  }
+
+  const response = await fetch(dataUrl)
+  return await response.blob()
+}
+
+type IndexOverrideResult = {
+  status: 'indexed' | 'skipped' | 'too-large'
+  pageCount?: number
+}
+
+type IndexOverride = (
+  file: File,
+  llmConfig: LLMConfig | undefined
+) => Promise<IndexOverrideResult> | IndexOverrideResult
+
+function getIndexOverride(): IndexOverride | undefined {
+  return (window as unknown as { __FORMBUDDY_INDEX_OVERRIDE?: IndexOverride }).__FORMBUDDY_INDEX_OVERRIDE
+}
+
+async function indexWithOptionalOverride(
+  file: File,
+  dirHandle: FileSystemDirectoryHandle,
+  onOcrProgress: (pct: number) => void,
+  onPhase: (phase: IndexPhase) => void,
+  llmConfig: LLMConfig | undefined
+) {
+  const override = getIndexOverride()
+  if (override) return await override(file, llmConfig)
+  return await indexDocument(file, dirHandle, onOcrProgress, onPhase, llmConfig)
+}
+
 /** Mark every document in the manifest needsReindex so the LLM step re-runs. */
 async function markAllForReindex(dirHandle: FileSystemDirectoryHandle): Promise<void> {
   const manifest = await readManifest(dirHandle)
@@ -93,6 +156,18 @@ export default function SidePanel() {
   // Persist between renders without triggering re-renders
   const dirHandleRef = useRef<FileSystemDirectoryHandle | null>(null)
   const rawFilesRef  = useRef<File[]>([])
+
+  useEffect(() => {
+    const testHooks = window as unknown as {
+      __FORMBUDDY_TEST_DROP_FILES?: (files: File[]) => Promise<void>
+    }
+    testHooks.__FORMBUDDY_TEST_DROP_FILES = async (filesToDrop: File[]) => {
+      await processDroppedFiles(filesToDrop)
+    }
+    return () => {
+      delete testHooks.__FORMBUDDY_TEST_DROP_FILES
+    }
+  }, [])
 
   useEffect(() => {
     const onMessage = (
@@ -227,7 +302,7 @@ export default function SidePanel() {
     for (const file of rawFiles) {
       patchFile(file.name, { status: 'indexing', phase: 'parsing' })
       try {
-        const result = await indexDocument(
+        const result = await indexWithOptionalOverride(
           file,
           dirHandle,
           pct   => patchFile(file.name, { ocrProgress: pct }),
@@ -417,9 +492,7 @@ export default function SidePanel() {
       setScreenshotStatus('indexing')
       setError(null)
 
-      const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' })
-      const response = await fetch(dataUrl)
-      const blob = await response.blob()
+      const blob = await captureVisibleTabPng()
       const fileName = screenshotFileName(new Date())
 
       await writeFileToFolder(dirHandle, fileName, blob)
@@ -432,7 +505,7 @@ export default function SidePanel() {
         ...prev,
       ])
 
-      const result = await indexDocument(
+      const result = await indexWithOptionalOverride(
         screenshotFile,
         dirHandle,
         pct => patchFile(fileName, { ocrProgress: pct }),
@@ -476,7 +549,7 @@ export default function SidePanel() {
     try {
       await writeFileToFolder(dirHandle, file.name, file)
 
-      const result = await indexDocument(
+      const result = await indexWithOptionalOverride(
         file,
         dirHandle,
         pct => patchFile(file.name, { ocrProgress: pct }),
@@ -507,12 +580,8 @@ export default function SidePanel() {
     }
   }
 
-  async function handleDrop(event: React.DragEvent<HTMLDivElement>): Promise<void> {
-    event.preventDefault()
-    setDropActive(false)
-    const dropped = Array.from(event.dataTransfer.files)
+  async function processDroppedFiles(dropped: File[]): Promise<void> {
     if (!dropped.length) return
-
     for (const file of dropped) {
       if (!isSupported(file.name)) {
         setError(`Unsupported file type: ${file.name}`)
@@ -521,6 +590,12 @@ export default function SidePanel() {
       setFiles(prev => [{ name: file.name, size: file.size, status: 'pending' }, ...prev])
       await addFileToContext(file)
     }
+  }
+
+  async function handleDrop(event: React.DragEvent<HTMLDivElement>): Promise<void> {
+    event.preventDefault()
+    setDropActive(false)
+    await processDroppedFiles(Array.from(event.dataTransfer.files))
   }
 
   async function handleSaveTextNote(noteOverride?: string, fromQuickAdd = false): Promise<void> {

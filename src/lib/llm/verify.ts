@@ -2,12 +2,24 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import type { LLMConfig } from '../../types'
 
+type VerifyOverride = 'valid' | 'invalid' | 'error' | undefined
+
+function getVerifyOverride(): VerifyOverride {
+  if (typeof window === 'undefined') return undefined
+  return (window as unknown as { __FORMBUDDY_VERIFY_OVERRIDE?: VerifyOverride }).__FORMBUDDY_VERIFY_OVERRIDE
+}
+
 /**
  * Makes the smallest possible API call to confirm the key and model are valid.
  * Returns true if the call succeeds, false if authentication fails.
  * Throws for unexpected network or server errors (let the caller handle those).
  */
 export async function verifyApiKey(config: LLMConfig): Promise<boolean> {
+  const override = getVerifyOverride()
+  if (override === 'valid') return true
+  if (override === 'invalid') return false
+  if (override === 'error') throw new Error('Forced test network error')
+
   try {
     if (config.provider === 'anthropic') {
       const client = new Anthropic({ apiKey: config.apiKey, dangerouslyAllowBrowser: true })

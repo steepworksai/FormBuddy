@@ -28,12 +28,19 @@ interface ContextUpdatedPayload {
   documents: DocumentIndex[]
 }
 
+type SuggestionOverride = Omit<Suggestion, 'id' | 'sessionId' | 'usedAt'> | null
+
 let indexedDocuments: DocumentIndex[] = []
 let activeDomain = ''
 let activeSessionId = ''
 let pageHistory: string[] = []
 const usedFieldIds = new Set<string>()
 const rejectedFieldIds = new Set<string>()
+
+function getSuggestionOverride(): SuggestionOverride | undefined {
+  return (globalThis as unknown as { __FORMBUDDY_SUGGESTION_OVERRIDE?: SuggestionOverride })
+    .__FORMBUDDY_SUGGESTION_OVERRIDE
+}
 
 function getDomain(url?: string): string {
   if (!url) return ''
@@ -90,6 +97,20 @@ async function handleFieldFocused(payload: FieldFocusedPayload, sender: chrome.r
       detectedAt: new Date().toISOString(),
     },
   })
+
+  const override = getSuggestionOverride()
+  if (override !== undefined) {
+    if (!override?.value) return
+    chrome.runtime.sendMessage({
+      type: 'NEW_SUGGESTION',
+      payload: {
+        id: crypto.randomUUID(),
+        sessionId,
+        ...override,
+      },
+    })
+    return
+  }
 
   if (!indexedDocuments.length) return
 
