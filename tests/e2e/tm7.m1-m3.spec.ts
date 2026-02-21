@@ -31,16 +31,21 @@ test.describe('TM7 — E2E milestones 1-3', () => {
 
   test('TM7.2 sidepanel app renders', async () => {
     const page = await context.newPage()
+    await page.addInitScript(() => {
+      ;(window as unknown as { __FORMBUDDY_DISABLE_TOUR__?: boolean }).__FORMBUDDY_DISABLE_TOUR__ = true
+    })
     await page.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`)
 
-    await expect(page.getByRole('heading', { name: 'FormBuddy' })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Choose Folder/i })).toBeVisible()
+    await expect(page.getByAltText('FormBuddy')).toBeVisible()
+    await expect(page.locator('#fb-choose-folder')).toBeVisible()
   })
 
   test('TM7.3 folder selection shows file listing with mocked local docs', async () => {
     const page = await context.newPage()
 
     await page.addInitScript(() => {
+      ;(window as unknown as { __FORMBUDDY_DISABLE_TOUR__?: boolean }).__FORMBUDDY_DISABLE_TOUR__ = true
+
       const store = new Map<string, string>()
       store.set('/root/sample-note.txt', 'This is a sample note for TM7.')
 
@@ -102,7 +107,7 @@ test.describe('TM7 — E2E milestones 1-3', () => {
     })
 
     await page.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`)
-    await page.getByRole('button', { name: /Choose Folder/i }).click()
+    await page.locator('#fb-choose-folder').click()
 
     await expect(page.getByText('sample-note.txt')).toBeVisible()
     await expect(page.getByText('FormBuddyDocs')).toBeVisible()

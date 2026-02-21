@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import './sidepanel.css'
 import {
   Camera,
-  Settings2,
+  BrainCircuit,
   Trash2,
   RotateCw,
   HelpCircle,
@@ -13,8 +14,8 @@ import {
   Loader2,
 } from 'lucide-react'
 import { startTour, isTourDone } from './tour'
-import { requestFolderAccess, listFiles } from '../lib/folder/access'
-import { writeFileToFolder } from '../lib/folder/access'
+import { shortModelName } from '../lib/utils/modelName'
+import { requestFolderAccess, listFiles, writeFileToFolder } from '../lib/folder/access'
 import { indexDocument } from '../lib/indexing/indexer'
 import {
   clearFormKVCache,
@@ -25,8 +26,7 @@ import {
   writeFormKVCacheEntry,
   writeManifest,
 } from '../lib/indexing/manifest'
-import { getTypeInfo } from '../lib/config/supportedTypes'
-import { isSupported } from '../lib/config/supportedTypes'
+import { getTypeInfo, isSupported } from '../lib/config/supportedTypes'
 import { MAX_PDF_PAGES } from '../lib/parser/pdf'
 import type { DocumentIndex, FormKVMapping, LLMConfig } from '../types'
 import type { IndexPhase } from '../lib/indexing/indexer'
@@ -98,6 +98,7 @@ async function loadLLMConfig(): Promise<LLMConfig | undefined> {
     chrome.storage.local.get('llmConfig', r => resolve(r.llmConfig as LLMConfig | undefined))
   })
 }
+
 
 function isBrowserInternalUrl(url: string | undefined): boolean {
   if (!url) return false
@@ -182,9 +183,10 @@ export default function SidePanel() {
   const [error, setError]         = useState<string | null>(null)
   const [busy, setBusy]           = useState(false)
   const [noLLM, setNoLLM]         = useState(false)
+  const [activeModel, setActiveModel] = useState<string>('')
   const [refreshed, setRefreshed] = useState(false)
   const [navInfo, setNavInfo] = useState<{ pageIndex: number; domain: string; url: string } | null>(null)
-  const [screenshotStatus, setScreenshotStatus] = useState<'idle' | 'indexing' | 'ready' | 'error'>('idle')
+  const [screenshotStatus, setScreenshotStatus] = useState<'idle' | 'indexing' | 'ready'>('idle')
   const [dropActive, setDropActive] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
   const [fillBusy, setFillBusy] = useState(false)
@@ -199,9 +201,19 @@ export default function SidePanel() {
   const dirHandleRef       = useRef<FileSystemDirectoryHandle | null>(null)
   const rawFilesRef        = useRef<File[]>([])
   const selectedFilesRef   = useRef<Set<string>>(new Set())
+  const syncTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Seed activeModel from storage on mount
+  useEffect(() => {
+    void loadLLMConfig().then(cfg => {
+      if (cfg?.apiKey) setActiveModel(shortModelName(cfg.model))
+    })
+  }, [])
 
   // Auto-start tour on very first visit
   useEffect(() => {
+    const disableTour = (window as unknown as { __FORMBUDDY_DISABLE_TOUR__?: boolean }).__FORMBUDDY_DISABLE_TOUR__
+    if (disableTour) return
     void isTourDone().then(done => {
       if (!done) startTour(false)
     })
@@ -326,6 +338,7 @@ export default function SidePanel() {
       if (!changes.llmConfig) return
       const nextValue = changes.llmConfig.newValue as LLMConfig | undefined
       setNoLLM(!nextValue?.apiKey)
+      setActiveModel(nextValue?.apiKey ? shortModelName(nextValue.model) : '')
       if (nextValue?.apiKey) setError(null)
     }
 
@@ -333,12 +346,16 @@ export default function SidePanel() {
     return () => chrome.storage.onChanged.removeListener(onStorageChanged)
   }, [])
 
-  // Keep ref current and re-sync context whenever the selection changes
+  // Keep ref current and re-sync context whenever the selection changes (debounced 300 ms)
   useEffect(() => {
     selectedFilesRef.current = selectedFiles
     const dirHandle = dirHandleRef.current
     if (!dirHandle) return
-    void syncContextToBackground(dirHandle)
+    if (syncTimerRef.current !== null) clearTimeout(syncTimerRef.current)
+    syncTimerRef.current = setTimeout(() => {
+      syncTimerRef.current = null
+      void syncContextToBackground(dirHandle)
+    }, 300)
   }, [selectedFiles])
 
   function patchFile(name: string, patch: Partial<FileEntry>) {
@@ -357,18 +374,37 @@ export default function SidePanel() {
     setSelectedFiles(new Set())
   }
 
+  async function queryFolderPermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
+    try {
+      const perm = await handle.queryPermission({ mode: 'readwrite' })
+      return perm === 'granted'
+    } catch {
+      return false
+    }
+  }
+
+  function resetFolderState(reason: string) {
+    dirHandleRef.current = null
+    rawFilesRef.current = []
+    setFolderName(null)
+    setFiles([])
+    setError(reason)
+  }
+
   async function syncContextToBackground(dirHandle: FileSystemDirectoryHandle): Promise<DocumentIndex[]> {
+    if (!(await queryFolderPermission(dirHandle))) {
+      resetFolderState('Folder access expired. Please reconnect your documents.')
+      return []
+    }
     const manifest = await readManifest(dirHandle)
     const documents: DocumentIndex[] = []
     const filter = selectedFilesRef.current
 
-    console.log('[FormBuddy][SP] syncContextToBackground: manifest has', manifest.documents.length, 'doc(s)', manifest.documents.map(d => d.fileName))
 
     for (const doc of manifest.documents) {
       // When the user has checked specific files, only include those
       if (filter.size > 0 && !filter.has(doc.fileName)) continue
       const entry = await readIndexEntry(dirHandle, doc.indexFile)
-      console.log('[FormBuddy][SP] readIndexEntry', doc.indexFile, entry ? 'OK' : 'NULL')
       if (!entry) continue
       if (doc.searchIndexFile) {
         const searchIndex = await readSearchIndexEntry(dirHandle, doc.searchIndexFile)
@@ -376,14 +412,9 @@ export default function SidePanel() {
       }
       documents.push(entry)
     }
-    const ack = await chrome.runtime.sendMessage({
+    await chrome.runtime.sendMessage({
       type: 'CONTEXT_UPDATED',
       payload: { documents },
-    })
-    console.log('[FormBuddy][FormKV] Context sync completed', {
-      selectedFiles: filter.size,
-      documentsLoaded: documents.length,
-      ack,
     })
 
     return documents
@@ -462,6 +493,11 @@ export default function SidePanel() {
       // No folder selected yet — just re-check the key status
       const llmConfig = await loadLLMConfig()
       setNoLLM(!llmConfig?.apiKey)
+      return
+    }
+
+    if (!(await queryFolderPermission(dirHandle))) {
+      resetFolderState('Folder access expired. Please reconnect your documents.')
       return
     }
 
@@ -570,9 +606,8 @@ export default function SidePanel() {
       setScreenshotStatus('ready')
       setTimeout(() => setScreenshotStatus('idle'), 2500)
     } catch (err) {
-      setScreenshotStatus('error')
       setError(getErrorMessage(err, 'Failed to capture screenshot.'))
-      setTimeout(() => setScreenshotStatus('idle'), 2500)
+      setScreenshotStatus('idle')
     }
   }
 
@@ -738,12 +773,22 @@ export default function SidePanel() {
   }
 
   return (
-    <div style={styles.container}>
+    <div className="fb-root" style={styles.container}>
+      <div className="fb-bg" aria-hidden="true">
+        <div className="fb-bg__blob fb-bg__blob--a" />
+        <div className="fb-bg__blob fb-bg__blob--b" />
+        <div className="fb-bg__blob fb-bg__blob--c" />
+      </div>
+      <div className="fb-content">
 
       {/* Title bar */}
       <div style={styles.titleRow}>
-        <div>
-          <h1 style={styles.title}>FormBuddy</h1>
+        <div style={styles.brandRow}>
+          <img
+            src={chrome.runtime.getURL('icons/icon48.png')}
+            alt="FormBuddy"
+            style={styles.brandIcon}
+          />
           <p style={styles.subtitle}>Form assistant for this page</p>
         </div>
         <div style={styles.iconRow}>
@@ -753,25 +798,33 @@ export default function SidePanel() {
               onClick={() => void handleCaptureScreenshot()}
               disabled={busy || screenshotStatus === 'indexing'}
               title="Capture screenshot"
+              aria-label="Capture screenshot"
             >
               {screenshotStatus === 'indexing'
                 ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
                 : <Camera size={16} />}
             </button>
           )}
+          {activeModel && (
+            <span style={styles.modelPill} title={`Active model: ${activeModel}`}>
+              {activeModel}
+            </span>
+          )}
           <button
             id="fb-settings-btn"
             style={styles.iconBtn}
             onClick={openSettings}
-            title="Settings"
+            title="AI Settings"
+            aria-label="AI Settings"
           >
-            <Settings2 size={16} />
+            <BrainCircuit size={16} />
           </button>
           {hasFolder && (
             <button
               style={styles.iconBtn}
               onClick={() => void handleClearCache()}
               title="Clear field cache"
+              aria-label="Clear field cache"
             >
               {cacheCleared ? <Check size={16} color="#059669" /> : <Trash2 size={16} />}
             </button>
@@ -782,6 +835,7 @@ export default function SidePanel() {
               onClick={handleRefresh}
               disabled={busy}
               title="Reload everything"
+              aria-label="Reload everything"
             >
               {refreshed
                 ? <Check size={16} color="#059669" />
@@ -792,6 +846,7 @@ export default function SidePanel() {
             style={styles.tourBtn}
             onClick={() => startTour(hasFolder)}
             title="Take a tour"
+            aria-label="Take a tour"
           >
             <HelpCircle size={14} />
           </button>
@@ -804,6 +859,8 @@ export default function SidePanel() {
         style={{ ...styles.folderCard, opacity: busy ? 0.75 : 1 }}
         onClick={handleChooseFolder}
         disabled={busy}
+        title={hasFolder ? 'Switch to a different document folder' : 'Choose a folder to index documents'}
+        aria-label={hasFolder ? 'Switch document folder' : 'Choose document folder'}
       >
         <span style={styles.folderCardIcon}>
           {busy
@@ -850,6 +907,11 @@ export default function SidePanel() {
           <button style={styles.inlineBtn} onClick={openSettings}>Configure →</button>
         </div>
       )}
+      {error && !hasFolder && (
+        <div style={styles.errorBanner} role="alert">
+          {error}
+        </div>
+      )}
       {refreshed && <p style={styles.successMsg}>✓ Refreshed with latest settings</p>}
       {screenshotStatus === 'indexing' && <p style={styles.infoMsg}>Indexing screenshot...</p>}
       {screenshotStatus === 'ready' && <p style={styles.successMsg}>✓ Screenshot indexed and ready</p>}
@@ -867,7 +929,14 @@ export default function SidePanel() {
           {selectedFiles.size > 0 && (
             <div style={styles.filterBanner}>
               <span>Using {selectedFiles.size} of {files.length} file{selectedFiles.size !== 1 ? 's' : ''}</span>
-              <button style={styles.clearFilterBtn} onClick={clearSelection}>Use all</button>
+              <button
+                style={styles.clearFilterBtn}
+                onClick={clearSelection}
+                title="Search across all indexed files"
+                aria-label="Use all files"
+              >
+                Use all
+              </button>
             </div>
           )}
           <ul style={styles.list}>
@@ -904,9 +973,9 @@ export default function SidePanel() {
           {error && (
             <div style={styles.errorRow}>
               <p style={styles.errorMsg}>{error}</p>
-              <button style={styles.retryBtn} onClick={() => { setError(null); void handleScanAndFill() }}>
-                <RotateCw size={11} /> Retry
-              </button>
+          <button style={styles.retryBtn} onClick={() => { setError(null); void handleScanAndFill() }}>
+            <RotateCw size={11} /> Retry
+          </button>
             </div>
           )}
 
@@ -916,6 +985,8 @@ export default function SidePanel() {
             style={{ ...styles.fillBtn, opacity: fillBusy ? 0.75 : 1 }}
             onClick={() => void handleScanAndFill()}
             disabled={fillBusy}
+            title="Scan this page, find values from your docs, and auto-fill the form"
+            aria-label="Scan and auto fill"
           >
             {fillBusy ? (
               <>
@@ -1008,6 +1079,7 @@ export default function SidePanel() {
         </div>
       )}
 
+      </div>
     </div>
   )
 }
@@ -1025,13 +1097,42 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     marginBottom: '12px',
   },
-  title:   { fontSize: '18px', fontWeight: 700, margin: 0 },
-  subtitle: {
-    margin: '2px 0 0',
-    fontSize: '11px',
-    color: '#6b7280',
+  brandRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    minWidth: 0,
   },
-  iconRow: { display: 'flex', gap: '4px' },
+  brandIcon: {
+    width: '38px',
+    height: '38px',
+    borderRadius: '8px',
+    flexShrink: 0,
+    boxShadow: '0 2px 6px rgba(0,0,0,0.12)',
+  },
+  subtitle: {
+    margin: 0,
+    fontSize: '12.5px',
+    color: '#6b7280',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  iconRow: { display: 'flex', gap: '4px', alignItems: 'center' },
+  modelPill: {
+    fontSize: '10px',
+    fontWeight: 700,
+    color: '#6366f1',
+    background: '#ede9fe',
+    border: '1px solid #c4b5fd',
+    borderRadius: '99px',
+    padding: '2px 7px',
+    letterSpacing: '0.2px',
+    whiteSpace: 'nowrap' as const,
+    maxWidth: '80px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
   iconBtn: {
     background: 'none',
     border: 'none',
@@ -1114,6 +1215,16 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '5px',
     fontSize: '12px',
     color: '#92400e',
+  },
+  errorBanner: {
+    marginTop: '8px',
+    padding: '8px',
+    background: '#fef2f2',
+    border: '1px solid #fecaca',
+    borderRadius: '5px',
+    fontSize: '12px',
+    color: '#991b1b',
+    fontWeight: 600,
   },
   navBox: {
     marginTop: '8px',

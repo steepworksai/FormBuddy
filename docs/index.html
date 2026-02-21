@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FormBuddy — AI Form Filler</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f9fafb; color: #111827; }
+    .hero { max-width: 720px; margin: 0 auto; padding: 80px 24px 60px; text-align: center; }
+    .badge { display: inline-block; background: #ede9fe; color: #6366f1; border: 1px solid #c4b5fd; border-radius: 99px; padding: 4px 14px; font-size: 13px; font-weight: 700; margin-bottom: 20px; }
+    h1 { font-size: 42px; font-weight: 900; color: #1f2937; line-height: 1.15; margin-bottom: 16px; }
+    .sub { font-size: 18px; color: #6b7280; line-height: 1.6; max-width: 540px; margin: 0 auto 36px; }
+    .cta { display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; border-radius: 12px; font-weight: 700; font-size: 16px; text-decoration: none; box-shadow: 0 4px 18px rgba(99,102,241,0.35); }
+    .features { max-width: 720px; margin: 60px auto; padding: 0 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+    .feature { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
+    .feature h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; color: #1f2937; }
+    .feature p { font-size: 13px; color: #6b7280; line-height: 1.55; }
+    .icon { font-size: 24px; margin-bottom: 10px; }
+    footer { text-align: center; padding: 32px 24px; font-size: 13px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+    footer a { color: #6366f1; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <div class="badge">Chrome Extension · Free · Open Source</div>
+    <h1>Fill any form from<br>your own documents</h1>
+    <p class="sub">FormBuddy reads your PDFs, passport scans, and tax forms locally — then suggests the right value for every field on any website. Private by design.</p>
+    <a class="cta" href="https://chrome.google.com/webstore/detail/formbuddy" target="_blank">
+      ➕ Add to Chrome — It's Free
+    </a>
+  </div>
+
+  <div class="features">
+    <div class="feature">
+      <div class="icon">📁</div>
+      <h3>Your documents, your device</h3>
+      <p>Point FormBuddy at a folder. Files are indexed locally — nothing is uploaded anywhere.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">⚡</div>
+      <h3>One-click autofill</h3>
+      <p>Scan &amp; Auto Fill detects every field on the page and fills them all at once from your documents.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">📍</div>
+      <h3>Full citations</h3>
+      <p>Every suggestion shows the exact file and page it came from. Never guess again.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">🔑</div>
+      <h3>Bring your own AI key</h3>
+      <p>Works with Anthropic Claude, OpenAI GPT-4o, and Google Gemini. No FormBuddy subscription.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">🔒</div>
+      <h3>Private by design</h3>
+      <p>No backend server. API keys stored in Chrome's encrypted local storage. Zero telemetry.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">📄</div>
+      <h3>PDF, images &amp; text</h3>
+      <p>Supports text PDFs, scanned documents (OCR), screenshots, and plain text notes.</p>
+    </div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/venkateshpoosarla/FormBuddy" target="_blank">GitHub</a> ·
+    <a href="privacy.html">Privacy Policy</a> ·
+    <a href="https://github.com/venkateshpoosarla/FormBuddy/issues" target="_blank">Support</a>
+  </footer>
+</body>
+</html>

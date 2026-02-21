@@ -6,6 +6,8 @@ interface FileSystemDirectoryHandle {
   keys(): AsyncIterableIterator<string>
   entries(): AsyncIterableIterator<[string, FileSystemHandle]>
   [Symbol.asyncIterator](): AsyncIterableIterator<FileSystemHandle>
+  queryPermission(options?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>
+  requestPermission(options?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>
 }
 
 interface Window {

@@ -95,3 +95,16 @@ export function createMemoryDirHandle(): FileSystemDirectoryHandle {
   const rootDir = new MemoryDirectoryHandle(store, '/root')
   return rootDir as unknown as FileSystemDirectoryHandle
 }
+
+/**
+ * Like createMemoryDirHandle but also exposes the underlying store so tests
+ * can inspect or delete individual files (e.g. to simulate missing uuid.json).
+ */
+export function createMemoryDirHandleWithStore(): {
+  handle: FileSystemDirectoryHandle
+  store: Map<string, FileContent>
+} {
+  const store = new Map<string, FileContent>()
+  const rootDir = new MemoryDirectoryHandle(store, '/root')
+  return { handle: rootDir as unknown as FileSystemDirectoryHandle, store }
+}

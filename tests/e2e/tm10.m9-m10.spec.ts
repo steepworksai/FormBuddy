@@ -38,7 +38,7 @@ test.describe('TM10 — E2E milestones 9-10 (session + screenshot)', () => {
         .__FORMBUDDY_INDEX_OVERRIDE = () => ({ status: 'indexed' })
     })
     await sidepanel.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`)
-    await sidepanel.getByRole('button', { name: /Choose Folder/i }).click()
+    await sidepanel.locator('#fb-choose-folder').click()
     await expect(sidepanel.getByText('sample-note.txt')).toBeVisible()
 
     // Keep a normal webpage as the active tab so captureVisibleTab targets it.
@@ -46,7 +46,7 @@ test.describe('TM10 — E2E milestones 9-10 (session + screenshot)', () => {
     await web.goto('https://example.com/capture')
     await web.bringToFront()
 
-    await sidepanel.getByRole('button', { name: '📸' }).click()
+    await sidepanel.getByRole('button', { name: /Capture screenshot/i }).click()
 
     await expect(sidepanel.getByText(/Screenshot indexed and ready/i)).toBeVisible()
     await expect(sidepanel.getByText(/screenshot-\d{4}-\d{2}-\d{2}-\d{4}\.png/)).toBeVisible()

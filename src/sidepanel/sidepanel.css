@@ -1,0 +1,96 @@
+:root {
+  --fb-bg-base: #fbfdff;
+  --fb-wave-a: rgba(99, 102, 241, 0.18);  /* indigo */
+  --fb-wave-b: rgba(168, 85, 247, 0.14);  /* fuchsia */
+  --fb-wave-c: rgba(34, 211, 238, 0.12);  /* cyan */
+}
+
+.fb-root {
+  position: relative;
+  min-height: 100vh;
+  background: var(--fb-bg-base);
+  overflow: hidden;
+}
+
+/* Background layer sits behind all content */
+.fb-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Subtle noise-ish pattern */
+.fb-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(17, 24, 39, 0.035), transparent 40%),
+    radial-gradient(circle at 90% 20%, rgba(17, 24, 39, 0.025), transparent 42%),
+    radial-gradient(circle at 30% 90%, rgba(17, 24, 39, 0.02), transparent 48%);
+  opacity: 0.65;
+}
+
+.fb-bg__blob {
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border-radius: 999px;
+  filter: blur(36px);
+  transform: translate3d(0, 0, 0);
+  mix-blend-mode: multiply;
+  opacity: 0.9;
+}
+
+.fb-bg__blob--a {
+  left: -220px;
+  top: -180px;
+  background: radial-gradient(circle at 30% 30%, var(--fb-wave-a), rgba(99, 102, 241, 0));
+  animation: fbWaveA 10s ease-in-out infinite;
+}
+
+.fb-bg__blob--b {
+  right: -260px;
+  top: 120px;
+  background: radial-gradient(circle at 40% 40%, var(--fb-wave-b), rgba(168, 85, 247, 0));
+  animation: fbWaveB 13s ease-in-out infinite;
+}
+
+.fb-bg__blob--c {
+  left: 35%;
+  bottom: -320px;
+  background: radial-gradient(circle at 35% 35%, var(--fb-wave-c), rgba(34, 211, 238, 0));
+  animation: fbWaveC 16s ease-in-out infinite;
+}
+
+@keyframes fbWaveA {
+  0%   { transform: translate(-10px, 0px) scale(1.00); }
+  50%  { transform: translate(30px, 25px) scale(1.06); }
+  100% { transform: translate(-10px, 0px) scale(1.00); }
+}
+
+@keyframes fbWaveB {
+  0%   { transform: translate(0px, -6px) scale(1.00); }
+  50%  { transform: translate(-28px, 22px) scale(1.05); }
+  100% { transform: translate(0px, -6px) scale(1.00); }
+}
+
+@keyframes fbWaveC {
+  0%   { transform: translate(0px, 0px) scale(1.00); }
+  50%  { transform: translate(18px, -22px) scale(1.07); }
+  100% { transform: translate(0px, 0px) scale(1.00); }
+}
+
+/* Ensure content sits above background */
+.fb-content {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fb-bg__blob {
+    animation: none !important;
+  }
+}
+

@@ -22,7 +22,7 @@ export function startTour(hasFolder: boolean): void {
       popover: {
         title: '👋 Welcome to FormBuddy',
         description: `
-          <p>Your <strong>AI-powered form assistant</strong> that fills web forms directly from your personal documents.</p>
+          <p>Your <strong>AI-powered form assistant</strong> that finds form-ready values directly from your personal documents.</p>
           <p style="margin-top:8px;color:#7c3aed;font-weight:600;font-size:12px;">Let's take a quick tour ✨</p>
         `,
       },
@@ -49,16 +49,41 @@ export function startTour(hasFolder: boolean): void {
               <span><strong>No backend</strong><br/>FormBuddy runs entirely client-side</span>
             </div>
           </div>
-          <p class="fb-privacy-note">Only matched snippets — never full documents — are sent to the AI.</p>
+          
+        `,
+      },
+    },
+    {
+      popover: {
+        title: '🤖 Frontier Model Support',
+        description: `
+          <div class="fb-privacy-grid">
+            <div class="fb-privacy-item">
+              <span class="fb-privacy-icon">🧠</span>
+              <span><strong>Anthropic Claude</strong><br/></span>
+            </div>
+            <div class="fb-privacy-item">
+              <span class="fb-privacy-icon">⚡</span>
+              <span><strong>OpenAI GPT</strong><br/></span>
+            </div>
+            <div class="fb-privacy-item">
+              <span class="fb-privacy-icon">✨</span>
+              <span><strong>Google Gemini</strong><br/></span>
+            </div>
+            <div class="fb-privacy-item">
+              <span class="fb-privacy-icon">🔁</span>
+              <span><strong>Choose the provider you prefer</strong><br/></span>
+            </div>
+          </div>
         `,
       },
     },
     {
       element: '#fb-settings-btn',
       popover: {
-        title: '⚙️ Connect an AI Provider',
+        title: '🧠 Connect an AI Provider',
         description: `
-          <p>Open <strong>Settings</strong> to add your Anthropic or OpenAI API key.</p>
+          <p>Open <strong>AI Settings</strong> to add your Anthropic, OpenAI, or Gemini API key.</p>
           <p>This unlocks smart extraction — FormBuddy will read and understand your documents much more accurately.</p>
         `,
         side: 'bottom' as const,
@@ -81,40 +106,40 @@ export function startTour(hasFolder: boolean): void {
 
   const folderSteps = hasFolder
     ? [
-        {
-          element: '#fb-file-list',
-          popover: {
-            title: '📋 Your Indexed Documents',
-            description: `
+      {
+        element: '#fb-file-list',
+        popover: {
+          title: '📋 Your Indexed Documents',
+          description: `
               <p>All your documents appear here with their indexing status.</p>
               <p>Check a file's checkbox to <strong>filter</strong> which documents FormBuddy searches.</p>
             `,
-            side: 'bottom' as const,
-          },
+          side: 'bottom' as const,
         },
-        {
-          element: '#fb-fill-section',
-          popover: {
-            title: '✨ Fill From My Docs',
-            description: `
-              <p>This is your <strong>main workspace</strong>. Enter form field names here and FormBuddy will find the matching values from your documents.</p>
+      },
+      {
+        element: '#fb-fill-section',
+        popover: {
+          title: '✨ Fill From My Docs',
+          description: `
+              <p>This is your <strong>main workspace</strong>. FormBuddy can scan fields on this page and match values from your documents.</p>
             `,
-            side: 'top' as const,
-          },
+          side: 'top' as const,
         },
-        {
-          element: '#fb-scan-btn',
-          popover: {
-            title: '⚡ Scan &amp; Auto Fill',
-            description: `
+      },
+      {
+        element: '#fb-scan-btn',
+        popover: {
+          title: '⚡ Scan &amp; Auto Fill',
+          description: `
               <p>One click does everything — <strong>scans the form</strong>, finds matching values from your documents, and <strong>fills it all automatically</strong>.</p>
               <p>Results appear in the table below with their source file.</p>
             `,
-            side: 'top' as const,
-            align: 'center' as const,
-          },
+          side: 'top' as const,
+          align: 'center' as const,
         },
-      ]
+      },
+    ]
     : []
 
   const finalStep = [

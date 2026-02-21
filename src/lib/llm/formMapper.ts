@@ -82,7 +82,6 @@ export async function buildFormAutofillMapWithLLM(
   config: LLMConfig,
   options?: FormMapperOptions
 ): Promise<FormKVMapping[]> {
-  const totalStart = Date.now()
   if (!fields.length || !documents.length) return []
   const payload = {
     reference_json: documents.map(doc => ({
@@ -93,51 +92,9 @@ export async function buildFormAutofillMapWithLLM(
   }
   const systemPrompt = getManualFieldExtractionPrompt()
   const userMessage = JSON.stringify(payload, null, 2)
-  const fieldCount = fields.length
-  const documentCount = documents.length
 
-  console.log('[FormBuddy][FormKV][LLM] Request prepared', {
-    provider: config.provider,
-    model: config.model,
-    fieldCount,
-    documentCount,
-  })
-  console.log('[FormBuddy][FormKV][LLM] System prompt', systemPrompt)
-  console.log('[FormBuddy][FormKV][LLM] User payload', payload)
-
-  const llmStart = Date.now()
   const raw = await callLLM(systemPrompt, userMessage, config)
-  const llmDurationMs = Date.now() - llmStart
-  console.log('[FormBuddy][FormKV][LLM] Call completed', {
-    durationMs: llmDurationMs,
-  })
-  console.log('[FormBuddy][FormKV][LLM] Raw response', raw)
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-  console.log('[FormBuddy][FormKV][LLM] Cleaned response', cleaned)
 
-  try {
-    const result = parseKeyValueMappings(cleaned, fields, documents)
-    console.log('[FormBuddy][FormKV][LLM] Parsed mappings', {
-      accepted: result.length,
-      mappings: result,
-      totalDurationMs: Date.now() - totalStart,
-    })
-    return result
-  } catch (error) {
-    const fallbackMapped = parseKeyValueMappings(cleaned, fields, documents)
-    if (fallbackMapped.length > 0) {
-      console.log('[FormBuddy][FormKV][LLM] Parsed key-value mappings via fallback', {
-        accepted: fallbackMapped.length,
-        mappings: fallbackMapped,
-        totalDurationMs: Date.now() - totalStart,
-      })
-      return fallbackMapped
-    }
-    console.warn('[FormBuddy][FormKV][LLM] Failed to parse mappings response', {
-      error: error instanceof Error ? error.message : String(error),
-      cleanedResponse: cleaned,
-      totalDurationMs: Date.now() - totalStart,
-    })
-    return []
-  }
+  return parseKeyValueMappings(cleaned, fields, documents)
 }

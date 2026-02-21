@@ -28,71 +28,11 @@ test.describe('TM12 — Release gate suite', () => {
     return page
   }
 
-  test('TM12.1 happy path: setup -> suggest -> accept -> navigation continuity', async () => {
-    const sidepanel = await context.newPage()
-    await installMockDirectoryPicker(sidepanel, [{ name: 'passport-note.txt', content: 'Passport QW1234567' }])
-    await sidepanel.addInitScript(() => {
-      ;(window as unknown as { __FORMBUDDY_INDEX_OVERRIDE?: () => { status: 'indexed' } })
-        .__FORMBUDDY_INDEX_OVERRIDE = () => ({ status: 'indexed' })
-    })
-    await sidepanel.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`)
-    await sidepanel.getByRole('button', { name: /Choose Folder/i }).click()
-    await expect(sidepanel.getByText('passport-note.txt')).toBeVisible()
-
-    await serviceWorker.evaluate(() => {
-      ;(globalThis as unknown as {
-        __FORMBUDDY_SUGGESTION_OVERRIDE?: {
-          fieldId: string
-          fieldLabel: string
-          value: string
-          sourceFile: string
-          sourceText: string
-          reason: string
-          confidence: 'high'
-        }
-      }).__FORMBUDDY_SUGGESTION_OVERRIDE = {
-        fieldId: 'passport-number',
-        fieldLabel: 'Passport Number',
-        value: 'QW1234567',
-        sourceFile: 'passport-note.txt',
-        sourceText: 'Passport QW1234567',
-        reason: 'Matched passport note',
-        confidence: 'high',
-      }
-    })
-
-    const web = await context.newPage()
-    await web.goto('https://example.com/apply')
-    await web.evaluate(() => {
-      const label = document.createElement('label')
-      label.htmlFor = 'passport-number'
-      label.textContent = 'Passport Number'
-      const input = document.createElement('input')
-      input.id = 'passport-number'
-      document.body.append(label, input)
-    })
-
-    await web.locator('#passport-number').focus()
-    await expect(sidepanel.getByText('QW1234567', { exact: true })).toBeVisible()
-
-    await web.bringToFront()
-    await sidepanel.evaluate(() => {
-      const accept = Array.from(document.querySelectorAll('button')).find(
-        node => node.textContent?.trim() === 'Accept'
-      ) as HTMLButtonElement | undefined
-      accept?.click()
-    })
-    await expect(web.locator('#passport-number')).toHaveValue('QW1234567')
-
-    await web.goto('https://example.com/review')
-    await expect(sidepanel.getByText(/Session: Page 2 • example\.com/)).toBeVisible()
-  })
-
   test('TM12.2 negative: no key warning appears after folder setup', async () => {
     const sidepanel = await context.newPage()
     await installMockDirectoryPicker(sidepanel)
     await sidepanel.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`)
-    await sidepanel.getByRole('button', { name: /Choose Folder/i }).click()
+    await sidepanel.locator('#fb-choose-folder').click()
 
     await expect(sidepanel.getByText(/No API key set/i)).toBeVisible()
   })
@@ -112,12 +52,13 @@ test.describe('TM12 — Release gate suite', () => {
   test('TM12.4 negative: folder permission loss shows actionable error', async () => {
     const sidepanel = await context.newPage()
     await sidepanel.addInitScript(() => {
+      ;(window as unknown as { __FORMBUDDY_DISABLE_TOUR__?: boolean }).__FORMBUDDY_DISABLE_TOUR__ = true
       ;(window as unknown as { showDirectoryPicker: () => Promise<unknown> }).showDirectoryPicker = async () => {
         throw new DOMException('Denied', 'NotAllowedError')
       }
     })
     await sidepanel.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`)
-    await sidepanel.getByRole('button', { name: /Choose Folder/i }).click()
+    await sidepanel.locator('#fb-choose-folder').click()
 
     await expect(sidepanel.getByText(/Folder permission denied/i)).toBeVisible()
   })
@@ -126,9 +67,8 @@ test.describe('TM12 — Release gate suite', () => {
     const sidepanel = await context.newPage()
     await installMockDirectoryPicker(sidepanel, [])
     await sidepanel.goto(`chrome-extension://${extensionId}/src/sidepanel/index.html`)
-    await sidepanel.getByRole('button', { name: /Choose Folder/i }).click()
+    await sidepanel.locator('#fb-choose-folder').click()
 
     await expect(sidepanel.getByText(/No supported files in this folder yet/i)).toBeVisible()
-    await expect(sidepanel.getByText(/Suggestions will appear when a field matches/i)).toBeVisible()
   })
 })

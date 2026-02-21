@@ -84,10 +84,8 @@ export async function indexDocument(
     // wrote the manifest but the <uuid>.json was lost (folder moved, extension reloaded, etc.)
     const indexExists = await readIndexEntry(dirHandle, `${existing.id}.json`)
     if (indexExists) {
-      console.log(`[FormBuddy] Skipped (unchanged): ${file.name}`)
       return { status: 'skipped', fileName: file.name }
     }
-    console.log(`[FormBuddy] Index file missing for ${file.name} — re-indexing`)
   }
 
   // ── Phase 1: Parse ────────────────────────────────────────
@@ -121,10 +119,6 @@ export async function indexDocument(
       .map(p => ({ pageNum: p.page, canvas: p.canvas! }))
 
     if (scannedPages.length > 0) {
-      const allScanned = scannedPages.length === rawPages.length
-      console.log(
-        `[FormBuddy] ${allScanned ? 'Fully scanned' : 'Mixed'} PDF — OCR on ${scannedPages.length}/${rawPages.length} page(s): ${file.name}`
-      )
       onPhase?.('ocr')
 
       let ocrResults = new Map<number, string>()
@@ -213,9 +207,6 @@ export async function indexDocument(
     if (llmAlreadyPrepared && previousEntry) {
       entities = previousEntry.entities
       summary = previousEntry.summary
-      console.log(`[FormBuddy] LLM already prepared — skipping LLM reindex for ${file.name}`)
-    } else {
-      console.log(`[FormBuddy] No LLM config — skipping entity extraction for ${file.name}`)
     }
   }
 
@@ -269,7 +260,6 @@ export async function indexDocument(
 
   try {
     await writeIndexEntry(dirHandle, `${id}.json`, indexEntry)
-    console.log(`[FormBuddy] writeIndexEntry OK: ${id}.json`)
   } catch (err) {
     console.error(`[FormBuddy] writeIndexEntry FAILED for ${file.name}:`, errorMessage(err))
     throw err
@@ -300,12 +290,10 @@ export async function indexDocument(
   }
   try {
     await writeManifest(dirHandle, updatedManifest)
-    console.log(`[FormBuddy] writeManifest OK: ${updatedManifest.documents.length} doc(s) in manifest`)
   } catch (err) {
     console.error(`[FormBuddy] writeManifest FAILED for ${file.name}:`, errorMessage(err))
     throw err
   }
 
-  console.log(`[FormBuddy] Indexed: ${file.name} → ${id}.json`)
   return { status: 'indexed', entry: indexEntry }
 }

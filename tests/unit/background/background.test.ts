@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DocumentIndex, Suggestion } from '../../../src/types'
 
+type SendResponse = (response?: unknown) => void
+
 interface ChromeMockState {
-  runtimeOnMessage?: (message: unknown, sender: chrome.runtime.MessageSender) => void
+  runtimeOnMessage?: (message: unknown, sender: chrome.runtime.MessageSender, sendResponse?: SendResponse) => void
   runtimeOnInstalled?: () => void
   webNavigationOnCompleted?: (details: { frameId: number; url: string }) => void
   contextMenuOnClicked?: (info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => void
@@ -42,7 +44,7 @@ function createChromeMock(llmConfig?: { provider: 'anthropic' | 'openai' | 'gemi
         },
       },
       onMessage: {
-        addListener: (fn: (message: unknown, sender: chrome.runtime.MessageSender) => void) => {
+        addListener: (fn: (message: unknown, sender: chrome.runtime.MessageSender, sendResponse?: SendResponse) => void) => {
           state.runtimeOnMessage = fn
         },
       },
@@ -228,6 +230,144 @@ describe('TM5 background workflow', () => {
     )
     expect(chromeState.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CAPTURE_SCREENSHOT_REQUEST' })
+    )
+  })
+
+  it('FORM_KV_FORCE_REFRESH emits idle status and responds ok', async () => {
+    const { chromeState } = await loadBackgroundWithMocks()
+    const sendResponse = vi.fn()
+    chromeState.runtimeOnMessage?.(
+      { type: 'FORM_KV_FORCE_REFRESH' },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    )
+
+    expect(chromeState.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'FORM_KV_STATUS',
+        payload: expect.objectContaining({ status: 'idle' }),
+      })
+    )
+    expect(sendResponse).toHaveBeenCalledWith(expect.objectContaining({ ok: true, disabled: true }))
+  })
+
+  it('ignores messages that do not match the IncomingMessage type guard', async () => {
+    const { chromeState } = await loadBackgroundWithMocks()
+    const sendResponse = vi.fn()
+
+    // Non-object values
+    chromeState.runtimeOnMessage?.('a plain string', {} as chrome.runtime.MessageSender, sendResponse)
+    chromeState.runtimeOnMessage?.(42, {} as chrome.runtime.MessageSender, sendResponse)
+    chromeState.runtimeOnMessage?.(null, {} as chrome.runtime.MessageSender, sendResponse)
+    // Object without a string `type` field
+    chromeState.runtimeOnMessage?.({ payload: { foo: 'bar' } }, {} as chrome.runtime.MessageSender, sendResponse)
+    chromeState.runtimeOnMessage?.({ type: 42 }, {} as chrome.runtime.MessageSender, sendResponse)
+
+    // None of the above should trigger a sendMessage or sendResponse call
+    expect(sendResponse).not.toHaveBeenCalled()
+    expect(chromeState.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('context menu fires QUICK_ADD with selected text', async () => {
+    const { chromeState } = await loadBackgroundWithMocks()
+    chromeState.contextMenuOnClicked?.(
+      { menuItemId: 'add-to-formbuddy', selectionText: 'Jane Doe' } as chrome.contextMenus.OnClickData,
+      { url: 'https://example.com' } as chrome.tabs.Tab
+    )
+    expect(chromeState.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'QUICK_ADD',
+        payload: expect.objectContaining({ content: 'Jane Doe', tabUrl: 'https://example.com' }),
+      })
+    )
+  })
+
+  it('context menu uses srcUrl when selectionText is absent', async () => {
+    const { chromeState } = await loadBackgroundWithMocks()
+    chromeState.contextMenuOnClicked?.(
+      { menuItemId: 'add-to-formbuddy', srcUrl: 'https://img.example.com/photo.jpg' } as chrome.contextMenus.OnClickData,
+      { url: 'https://example.com' } as chrome.tabs.Tab
+    )
+    expect(chromeState.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'QUICK_ADD',
+        payload: expect.objectContaining({ content: 'https://img.example.com/photo.jpg' }),
+      })
+    )
+  })
+
+  it('context menu does nothing when content is empty', async () => {
+    const { chromeState } = await loadBackgroundWithMocks()
+    chromeState.contextMenuOnClicked?.(
+      { menuItemId: 'add-to-formbuddy' } as chrome.contextMenus.OnClickData,
+      { url: 'https://example.com' } as chrome.tabs.Tab
+    )
+    expect(chromeState.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('MANUAL_FIELD_FETCH with empty fields responds with reason', async () => {
+    const { chromeState } = await loadBackgroundWithMocks()
+    const sendResponse = vi.fn()
+    chromeState.runtimeOnMessage?.(
+      { type: 'MANUAL_FIELD_FETCH', payload: { fields: [] } },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    )
+    await flushAsync()
+    expect(sendResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: true, reason: 'No fields were provided.' })
+    )
+  })
+
+  it('MANUAL_FIELD_FETCH with no indexed documents responds with reason', async () => {
+    const { chromeState } = await loadBackgroundWithMocks()
+    const sendResponse = vi.fn()
+    chromeState.runtimeOnMessage?.(
+      { type: 'MANUAL_FIELD_FETCH', payload: { fields: ['Name'] } },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    )
+    await flushAsync()
+    expect(sendResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: true, reason: 'No indexed documents are selected.' })
+    )
+  })
+
+  it('MANUAL_FIELD_FETCH uses regex fallback to extract height from rawText', async () => {
+    const { chromeState } = await loadBackgroundWithMocks({
+      llmConfig: { provider: 'anthropic', apiKey: '', model: 'claude-sonnet-4-6' },
+      queryCandidates: [],
+    })
+    const heightDoc = {
+      id: 'doc-dl',
+      fileName: 'drivers-license.pdf',
+      type: 'pdf' as const,
+      indexedAt: new Date().toISOString(),
+      language: 'en',
+      pageCount: 1,
+      pages: [{ page: 1, rawText: "height: 5'10\"", fields: [] }],
+      entities: { identifiers: [] },
+      summary: 'drivers license',
+      usedFields: [],
+    } satisfies DocumentIndex
+    chromeState.runtimeOnMessage?.(
+      { type: 'CONTEXT_UPDATED', payload: { documents: [heightDoc] } },
+      {} as chrome.runtime.MessageSender
+    )
+    const sendResponse = vi.fn()
+    chromeState.runtimeOnMessage?.(
+      { type: 'MANUAL_FIELD_FETCH', payload: { fields: ['Height'] } },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    )
+    await flushAsync()
+    expect(sendResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: true,
+        results: expect.arrayContaining([
+          expect.objectContaining({ fieldLabel: 'Height', value: "5'10\"" }),
+        ]),
+      })
     )
   })
 

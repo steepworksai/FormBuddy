@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMemoryDirHandle } from '../../mocks/fsa'
+import { createMemoryDirHandle, createMemoryDirHandleWithStore } from '../../mocks/fsa'
 
 vi.mock('../../../src/lib/parser/pdf', () => ({
   extractTextFromPDF: vi.fn(async () => ({
@@ -57,5 +57,28 @@ describe('TM2 indexer', () => {
 
     const second = await indexDocument(file, dir)
     expect(second.status).toBe('skipped')
+  })
+
+  it('re-indexes when manifest has entry but uuid.json was deleted', async () => {
+    // This covers the bug fix: returning 'skipped' when the manifest checksum matches
+    // but the physical uuid.json no longer exists (e.g. after a folder move or reload).
+    const { indexDocument } = await import('../../../src/lib/indexing/indexer')
+    const { handle: dir, store } = createMemoryDirHandleWithStore()
+    const file = new File(['content'], 'resume.txt', { type: 'text/plain' })
+
+    // First pass: indexes successfully and writes uuid.json + manifest
+    const first = await indexDocument(file, dir)
+    expect(first.status).toBe('indexed')
+
+    // Simulate uuid.json being lost (folder moved, extension reloaded, etc.)
+    const uuidJsonKey = [...store.keys()].find(
+      k => /\/[0-9a-f-]{36}\.json$/.test(k) && !k.includes('search.index')
+    )
+    expect(uuidJsonKey).toBeDefined()
+    store.delete(uuidJsonKey!)
+
+    // Second pass: same file content (checksum matches) but uuid.json is gone → must re-index
+    const second = await indexDocument(file, dir)
+    expect(second.status).toBe('indexed')
   })
 })

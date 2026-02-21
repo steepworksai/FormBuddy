@@ -6,7 +6,8 @@ const manifest = defineManifest({
   manifest_version: 3,
   name: 'FormBuddy',
   version: '1.0.0',
-  description: 'Universal form-filling assistant powered by your personal documents',
+  description: 'Fill any web form instantly from your personal documents — locally, privately, with AI-powered suggestions and full citations.',
+  homepage_url: 'https://venkateshpoosarla.github.io/FormBuddy/',
   permissions: [
     'storage',
     'activeTab',

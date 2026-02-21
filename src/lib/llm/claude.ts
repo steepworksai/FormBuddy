@@ -19,6 +19,7 @@ export async function callClaude(
   })
 
   const block = response.content[0]
+  if (!block) throw new Error('Empty response from Claude')
   if (block.type !== 'text') throw new Error('Unexpected response type from Claude')
   return block.text
 }

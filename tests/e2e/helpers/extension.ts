@@ -35,6 +35,8 @@ export async function installMockDirectoryPicker(
   files: SeedFile[] = [{ name: 'sample-note.txt', content: 'Sample context for FormBuddy tests.' }],
 ): Promise<void> {
   await page.addInitScript((seed: SeedFile[]) => {
+    ;(window as unknown as { __FORMBUDDY_DISABLE_TOUR__?: boolean }).__FORMBUDDY_DISABLE_TOUR__ = true
+
     const store = new Map<string, { content: string; mimeType: string }>()
     for (const file of seed) {
       store.set(`/root/${file.name}`, {

@@ -11,7 +11,6 @@ chrome.sidePanel
   .catch(console.error)
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('[FormBuddy] Extension installed.')
   chrome.contextMenus.create({
     id: 'add-to-formbuddy',
     title: 'Add to FormBuddy folder',
@@ -35,6 +34,22 @@ interface ManualFieldFetchPayload {
 }
 
 type SuggestionOverride = Omit<Suggestion, 'id' | 'sessionId' | 'usedAt'> | null
+
+type IncomingMessage =
+  | { type: 'CONTEXT_UPDATED'; payload: ContextUpdatedPayload }
+  | { type: 'FORM_SCHEMA' }
+  | { type: 'FORM_KV_FORCE_REFRESH' }
+  | { type: 'MANUAL_FIELD_FETCH'; payload: ManualFieldFetchPayload }
+  | { type: 'GET_PAGE_FIELDS' }
+  | { type: 'BULK_AUTOFILL'; payload: { mappings?: Array<{ fieldLabel: string; value: string }> } }
+  | { type: 'FIELD_FOCUSED'; payload: FieldFocusedPayload }
+  | { type: 'SUGGESTION_ACCEPTED'; payload: Suggestion }
+  | { type: 'SUGGESTION_REJECTED'; payload: { fieldId?: string } }
+  | { type: 'SCREENSHOT_HOTKEY' }
+
+function isTypedMessage(msg: unknown): msg is IncomingMessage {
+  return typeof msg === 'object' && msg !== null && typeof (msg as Record<string, unknown>).type === 'string'
+}
 
 let indexedDocuments: DocumentIndex[] = []
 let activeDomain = ''
@@ -90,14 +105,6 @@ async function sendToTab(tabId: number, message: unknown): Promise<unknown> {
   return await chrome.tabs.sendMessage(tabId, message)
 }
 
-function logFormKv(step: string, meta?: Record<string, unknown>): void {
-  if (meta) {
-    console.log(`[FormBuddy][FormKV] ${step}`, meta)
-    return
-  }
-  console.log(`[FormBuddy][FormKV] ${step}`)
-}
-
 function emitFormKvStatus(
   status: 'idle' | 'running' | 'ready' | 'error',
   payload?: Record<string, unknown>
@@ -113,8 +120,7 @@ function emitFormKvStatus(
 }
 
 function getSuggestionOverride(): SuggestionOverride | undefined {
-  return (globalThis as unknown as { __FORMBUDDY_SUGGESTION_OVERRIDE?: SuggestionOverride })
-    .__FORMBUDDY_SUGGESTION_OVERRIDE
+  return (globalThis as Record<string, unknown>).__FORMBUDDY_SUGGESTION_OVERRIDE as SuggestionOverride | undefined
 }
 
 function getDomain(url?: string): string {
@@ -159,13 +165,6 @@ function overlapScore(a: string, bTokens: string[]): number {
   return bTokens.reduce((acc, token) => acc + (lower.includes(token) ? 1 : 0), 0)
 }
 
-function labelTokens(label: string): string[] {
-  return label
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-}
 
 function bestFieldFromDocs(label: string): {
   value: string
@@ -174,7 +173,7 @@ function bestFieldFromDocs(label: string): {
   sourceText: string
   confidence: 'high' | 'medium' | 'low'
 } | null {
-  const tokens = labelTokens(label)
+  const tokens = tokenize(label)
   let best: {
     value: string
     sourceFile: string
@@ -426,15 +425,6 @@ async function handleFieldFocused(payload: FieldFocusedPayload, sender: chrome.r
   const sessionId = ensureSession(sender.url ?? sender.tab?.url)
   if (usedFieldIds.has(payload.fieldId) || rejectedFieldIds.has(payload.fieldId)) return
 
-  console.log('[FormBuddy] FIELD_FOCUSED', {
-    fieldId: payload.fieldId,
-    fieldLabel: payload.fieldLabel,
-    tagName: payload.tagName,
-    url: sender.url ?? sender.tab?.url ?? 'unknown',
-    tabId: sender.tab?.id,
-    sessionId,
-  })
-
   chrome.runtime.sendMessage({
     type: 'FIELD_DETECTED',
     payload: {
@@ -544,16 +534,6 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
   const llmConfig = await loadLLMConfig()
   const labels = (payload.fields ?? []).map(v => v.trim()).filter(Boolean).slice(0, 25)
 
-  console.log('[FormBuddy][BG] handleManualFieldFetch start', {
-    labelCount: labels.length,
-    labels,
-    indexedDocumentCount: indexedDocuments.length,
-    indexedDocuments: indexedDocuments.map(d => d.fileName),
-    hasApiKey: !!llmConfig?.apiKey,
-    provider: llmConfig?.provider,
-    model: llmConfig?.model,
-  })
-
   if (!labels.length) return { results: [], reason: 'No fields were provided.' }
   if (!indexedDocuments.length) {
     console.warn('[FormBuddy][BG] No indexed documents in memory — was CONTEXT_UPDATED received?')
@@ -563,12 +543,10 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
 
   const cached = await requestFormKVCache(signature)
   if (cached) {
-    logFormKv('Manual field fetch cache hit', { signature, mappings: cached.length })
     const cachedResults = cached.map(mappingToManualResult)
     if (cachedResults.length > 0) return { results: cachedResults }
     return { results: [], reason: 'No matching values found for the requested fields.' }
   }
-  logFormKv('Manual field fetch cache miss', { signature })
 
   const results: Array<{
   fieldLabel: string
@@ -599,10 +577,6 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
       hadSearchPayload = docsPayload.length > 0
 
       if (docsPayload.length > 0) {
-        logFormKv('Manual field fetch: running required bulk LLM call', {
-          requestedFields: labels.length,
-          docs: docsPayload.length,
-        })
         const llmMappings = await buildFormAutofillMapWithLLM(
           labels.map(label => ({
             fieldId: normalizeKey(label).replace(/\s+/g, '_') || label,
@@ -630,15 +604,7 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
         }
       }
     } catch (err) {
-      logFormKv('Manual field bulk LLM matching failed', {
-        message: err instanceof Error ? err.message : String(err),
-      })
     }
-  }
-
-  // Bulk LLM already handled all fields — skip per-field fallbacks
-  if (results.length > 0) {
-    logFormKv('Bulk LLM produced results — skipping per-field fallback', { resultCount: results.length })
   }
 
   for (const label of labels) {
@@ -736,23 +702,24 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
   }
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === 'CONTEXT_UPDATED') {
-    const payload = message.payload as ContextUpdatedPayload
-    indexedDocuments = payload.documents ?? []
+chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
+  if (!isTypedMessage(rawMessage)) return
+
+  const message = rawMessage
+
+  if (message.type === 'CONTEXT_UPDATED') {
+    indexedDocuments = message.payload.documents ?? []
     if (typeof sendResponse === 'function') {
       sendResponse({ ok: true, documentCount: indexedDocuments.length })
     }
-    console.log(`[FormBuddy] Context updated: ${indexedDocuments.length} indexed document(s)`)
     return true
   }
 
-  if (message?.type === 'FORM_SCHEMA') {
-    logFormKv('FORM_SCHEMA ignored (auto mapping is disabled)')
+  if (message.type === 'FORM_SCHEMA') {
     return
   }
 
-  if (message?.type === 'FORM_KV_FORCE_REFRESH') {
+  if (message.type === 'FORM_KV_FORCE_REFRESH') {
     emitFormKvStatus('idle', { reason: 'auto-mapping-disabled' })
     if (typeof sendResponse === 'function') {
       sendResponse({ ok: true, disabled: true })
@@ -760,21 +727,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return
   }
 
-  if (message?.type === 'MANUAL_FIELD_FETCH') {
-    const payload = message.payload as ManualFieldFetchPayload
-    console.log('[FormBuddy][BG] MANUAL_FIELD_FETCH received', {
-      fieldCount: payload?.fields?.length,
-      fields: payload?.fields,
-      indexedDocumentCount: indexedDocuments.length,
-    })
+  if (message.type === 'MANUAL_FIELD_FETCH') {
+    const payload = message.payload
     void (async () => {
       try {
         const output = await handleManualFieldFetch(payload)
-        console.log('[FormBuddy][BG] MANUAL_FIELD_FETCH responding', {
-          ok: true,
-          resultCount: output.results.length,
-          reason: output.reason,
-        })
         sendResponse({ ok: true, ...output })
       } catch (err) {
         console.error('[FormBuddy][BG] MANUAL_FIELD_FETCH threw', err)
@@ -787,7 +744,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
-  if (message?.type === 'GET_PAGE_FIELDS') {
+  if (message.type === 'GET_PAGE_FIELDS') {
     void (async () => {
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -800,8 +757,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return
         }
         await reloadAndWait(tab.id)
-        const result = await sendToTab(tab.id, { type: 'REQUEST_FORM_SCHEMA' })
-        sendResponse({ ok: true, fields: ((result as { fields?: unknown })?.fields ?? []) as Array<{ fieldLabel: string }> })
+        const raw = await sendToTab(tab.id, { type: 'REQUEST_FORM_SCHEMA' })
+        const fields = (
+          typeof raw === 'object' && raw !== null && Array.isArray((raw as Record<string, unknown>).fields)
+            ? (raw as { fields: Array<{ fieldLabel: string }> }).fields
+            : []
+        )
+        sendResponse({ ok: true, fields })
       } catch (err) {
         sendResponse({ ok: false, fields: [], reason: err instanceof Error ? err.message : String(err) })
       }
@@ -809,8 +771,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
-  if (message?.type === 'BULK_AUTOFILL') {
-    const mappings = message.payload?.mappings as Array<{ fieldLabel: string; value: string }> | undefined
+  if (message.type === 'BULK_AUTOFILL') {
+    const mappings = message.payload?.mappings
     if (!mappings?.length) {
       sendResponse({ ok: false, reason: 'No mappings provided.' })
       return true
@@ -822,11 +784,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, reason: 'No active tab found.' })
           return
         }
-        const result = await sendToTab(tab.id, {
+        const raw = await sendToTab(tab.id, {
           type: 'BULK_AUTOFILL',
           payload: { mappings },
         })
-        sendResponse({ ok: true, ...(result as object) })
+        const extra = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {}
+        sendResponse({ ok: true, ...extra })
       } catch (err) {
         sendResponse({ ok: false, reason: err instanceof Error ? err.message : String(err) })
       }
@@ -834,15 +797,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
-  if (message?.type === 'FIELD_FOCUSED') {
-    const payload = message.payload as FieldFocusedPayload
+  if (message.type === 'FIELD_FOCUSED') {
+    const payload = message.payload
     if (!payload?.fieldId || !payload?.fieldLabel) return
     void handleFieldFocused(payload, sender)
     return
   }
 
-  if (message?.type === 'SUGGESTION_ACCEPTED') {
-    const payload = message.payload as Suggestion
+  if (message.type === 'SUGGESTION_ACCEPTED') {
+    const payload = message.payload
     if (!payload?.fieldId || !payload?.value) return
 
     usedFieldIds.add(payload.fieldId)
@@ -859,14 +822,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return
   }
 
-  if (message?.type === 'SUGGESTION_REJECTED') {
-    const payload = message.payload as { fieldId?: string }
+  if (message.type === 'SUGGESTION_REJECTED') {
+    const payload = message.payload
     if (!payload?.fieldId) return
     rejectedFieldIds.add(payload.fieldId)
     return
   }
 
-  if (message?.type === 'SCREENSHOT_HOTKEY') {
+  if (message.type === 'SCREENSHOT_HOTKEY') {
     chrome.runtime.sendMessage({
       type: 'CAPTURE_SCREENSHOT_REQUEST',
       payload: { requestedAt: new Date().toISOString() },

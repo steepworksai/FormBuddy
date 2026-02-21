@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FormBuddy — Privacy Policy</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 720px; margin: 48px auto; padding: 0 24px; color: #111827; line-height: 1.7; }
+    h1 { font-size: 28px; font-weight: 800; color: #1f2937; }
+    h2 { font-size: 18px; font-weight: 700; margin-top: 32px; color: #374151; }
+    p, li { font-size: 15px; color: #4b5563; }
+    ul { padding-left: 20px; }
+    a { color: #6366f1; }
+    .updated { font-size: 13px; color: #9ca3af; margin-top: -8px; }
+    footer { margin-top: 48px; font-size: 13px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>FormBuddy — Privacy Policy</h1>
+  <p class="updated">Last updated: February 2026</p>
+
+  <h2>1. Overview</h2>
+  <p>FormBuddy is a Chrome Extension that helps you fill web forms using documents stored on your own device. FormBuddy has no backend server. No data is ever sent to FormBuddy or collected by FormBuddy.</p>
+
+  <h2>2. Your Documents</h2>
+  <p>Documents in your chosen folder are read locally on your device using the browser's File System Access API. They are indexed entirely on-device and are <strong>never uploaded to any server</strong>.</p>
+
+  <h2>3. AI Provider API Calls</h2>
+  <p>When you use AI-powered features, short text snippets from your documents are sent <strong>directly from your browser</strong> to the AI provider you configured (Anthropic or OpenAI or Google Gemini). FormBuddy does not proxy or intercept these calls. Your data is governed by the provider's privacy policy:</p>
+  <ul>
+    <li><a href="https://www.anthropic.com/privacy" target="_blank">Anthropic Privacy Policy</a></li>
+    <li><a href="https://openai.com/privacy" target="_blank">OpenAI Privacy Policy</a></li>
+    <li><a href="https://policies.google.com/privacy" target="_blank">Google Privacy Policy</a></li>
+  </ul>
+
+  <h2>4. API Keys</h2>
+  <p>Your API key is stored locally in Chrome's encrypted extension storage (<code>chrome.storage.local</code>). It is never sent to FormBuddy or any third party other than the AI provider you configured.</p>
+
+  <h2>5. Usage &amp; Session Data</h2>
+  <p>Session data (which form fields were filled, from which document) is stored locally in a <code>usage.json</code> file inside your chosen folder on your own device. FormBuddy does not transmit, access remotely, or analyse this file.</p>
+
+  <h2>6. Permissions</h2>
+  <ul>
+    <li><strong>storage</strong> — stores your API key and settings locally in Chrome</li>
+    <li><strong>activeTab / scripting / host_permissions</strong> — detects form fields on the page you are viewing and fills them on your request</li>
+    <li><strong>sidePanel</strong> — shows the FormBuddy interface alongside the page</li>
+    <li><strong>webNavigation</strong> — tracks page navigation within the same domain for multi-page form continuity</li>
+    <li><strong>tabs</strong> — opens the AI provider settings page when you click "Get API Key"</li>
+    <li><strong>contextMenus</strong> — adds a right-click option to save selected text to your folder</li>
+  </ul>
+
+  <h2>7. No Tracking, Analytics, or Advertising</h2>
+  <p>FormBuddy does not use any analytics SDK, crash reporter, advertising network, or telemetry of any kind.</p>
+
+  <h2>8. Children's Privacy</h2>
+  <p>FormBuddy is not directed at children under 13 and does not knowingly collect any information from children.</p>
+
+  <h2>9. Changes to This Policy</h2>
+  <p>If this policy changes materially, the updated date at the top of this page will be updated. Continued use of the extension after changes constitutes acceptance of the revised policy.</p>
+
+  <h2>10. Contact</h2>
+  <p>For privacy questions, open an issue at <a href="https://github.com/venkateshpoosarla/FormBuddy/issues" target="_blank">github.com/venkateshpoosarla/FormBuddy/issues</a>.</p>
+
+  <footer>
+    FormBuddy is open-source software. <a href="https://github.com/venkateshpoosarla/FormBuddy" target="_blank">View on GitHub</a>
+  </footer>
+</body>
+</html>

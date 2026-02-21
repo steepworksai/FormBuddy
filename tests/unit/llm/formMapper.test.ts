@@ -149,4 +149,27 @@ describe('buildFormAutofillMapWithLLM', () => {
     const result = await buildFormAutofillMapWithLLM(fields, documents, config)
     expect(result[0].value).toBe('1990-05-20T00:00:00Z')
   })
+
+  it('handles CRLF line endings', async () => {
+    mockCallLLM.mockResolvedValueOnce(
+      'First Name: Jane Doe\r\nEmail Address: jane@example.com\r\n'
+    )
+    const result = await buildFormAutofillMapWithLLM(fields, documents, config)
+    expect(result.length).toBe(2)
+    expect(result.find(r => r.fieldLabel === 'First Name')?.value).toBe('Jane Doe')
+    expect(result.find(r => r.fieldLabel === 'Email Address')?.value).toBe('jane@example.com')
+  })
+
+  it('returns empty array for whitespace-only response', async () => {
+    mockCallLLM.mockResolvedValueOnce('   \n\n   \n   ')
+    const result = await buildFormAutofillMapWithLLM(fields, documents, config)
+    expect(result).toEqual([])
+  })
+
+  it('skips lines that start with a colon (empty label)', async () => {
+    mockCallLLM.mockResolvedValueOnce(':value without label\nFirst Name: Jane Doe')
+    const result = await buildFormAutofillMapWithLLM(fields, documents, config)
+    expect(result.length).toBe(1)
+    expect(result[0].fieldLabel).toBe('First Name')
+  })
 })
