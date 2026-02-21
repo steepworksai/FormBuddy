@@ -93,10 +93,10 @@ This produces the `dist/` directory using Vite + `@crxjs/vite-plugin`.
 
 ### Create the ZIP
 ```bash
-cd dist && zip -r ../formbuddy-v1.0.0.zip . && cd ..
+cd dist && zip -r ../formbuddy-v1.0.0.zip . --exclude "*.DS_Store" --exclude ".vite/*" && cd ..
 ```
 
-**Do not** include `node_modules/`, `src/`, `.indexing/`, test files, or `.env` files in the ZIP. The ZIP must contain only the compiled `dist/` contents.
+**Do not** include `.vite/` in the ZIP — it contains Vite's internal asset manifest which triggers a "more than one manifest.json" validation error on both stores. The ZIP must contain only the compiled `dist/` contents minus `.vite/`.
 
 ### Verify the ZIP Before Uploading
 1. Open `chrome://extensions` in Chrome
