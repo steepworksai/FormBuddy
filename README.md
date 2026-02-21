@@ -127,4 +127,4 @@ Issues and pull requests are welcome. Please open an issue first to discuss sign
 
 ## License
 
-[MIT](LICENSE) © 2026 Waystone Studio
+[MIT](LICENSE) © 2026 Waystone Studios
