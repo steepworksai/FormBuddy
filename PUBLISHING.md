@@ -1,6 +1,6 @@
-# FormBuddy — Chrome Web Store Publishing Guide
+# FormBuddy — Publishing Guide (Chrome Web Store & Microsoft Edge Add-ons)
 
-This document covers every step required to submit FormBuddy to the Chrome Web Store, from account setup to post-publish maintenance.
+This document covers every step required to submit FormBuddy to the Chrome Web Store and Microsoft Edge Add-ons store. The same ZIP works for both stores — no code changes required.
 
 ---
 
@@ -12,9 +12,10 @@ This document covers every step required to submit FormBuddy to the Chrome Web S
 4. [Required Assets](#4-required-assets)
 5. [Privacy Policy](#5-privacy-policy)
 6. [Store Listing Copy](#6-store-listing-copy)
-7. [Submitting to the Dashboard](#7-submitting-to-the-dashboard)
-8. [Review Process](#8-review-process)
-9. [Post-Publish Maintenance](#9-post-publish-maintenance)
+7. [Submitting to the Chrome Web Store Dashboard](#7-submitting-to-the-chrome-web-store-dashboard)
+8. [Submitting to Microsoft Edge Add-ons](#8-submitting-to-microsoft-edge-add-ons)
+9. [Review Process](#9-review-process)
+10. [Post-Publish Maintenance](#10-post-publish-maintenance)
 
 ---
 
@@ -296,7 +297,7 @@ PDF reader, form automation, personal assistant
 
 ---
 
-## 7. Submitting to the Dashboard
+## 7. Submitting to the Chrome Web Store Dashboard
 
 ### Step-by-Step
 
@@ -346,7 +347,70 @@ The dashboard requires written justification for certain permissions. Use these:
 
 ---
 
-## 8. Review Process
+## 8. Submitting to Microsoft Edge Add-ons
+
+The same `formbuddy-v1.0.0.zip` built for Chrome works on Edge without modification. Manifest V3 is supported on Edge 121+ and the `sidePanel` API is available on Edge 125+.
+
+### One-time Account Setup
+
+1. Go to [Microsoft Partner Center](https://partner.microsoft.com/dashboard/microsoftedge/overview)
+2. Sign in with a Microsoft account (personal or work/school account)
+3. Registration is **free** — no fee unlike Chrome Web Store
+4. Accept the Microsoft Edge Add-ons developer agreement
+
+### Submitting Your Extension
+
+1. Click **Create new extension** in the Partner Center dashboard
+
+2. **Upload the package**
+   - Upload `formbuddy-v1.0.0.zip` — the same ZIP used for Chrome
+   - Partner Center will validate the manifest automatically
+
+3. **Store listings tab**
+   - Language: English
+   - Name: `FormBuddy — AI Form Filler`
+   - Short description (≤250 characters): use the same short description from section 6
+   - Long description: use the same long description from section 6
+   - Category: **Productivity**
+   - Upload the same icons and screenshots prepared for Chrome
+
+4. **Availability tab**
+   - Visibility: **Public** or **Hidden** (for staged rollout)
+   - Markets: All markets, or restrict as needed
+
+5. **Properties tab**
+   - Privacy policy URL: `https://venkateshpoosarla.github.io/FormBuddy/privacy.html`
+   - Website URL: `https://venkateshpoosarla.github.io/FormBuddy/`
+   - Support URL: your GitHub Issues page
+
+6. **Privacy practices tab**
+   - Does the extension collect personal data? → **No**
+   - Does it send data to a remote server? → **Yes** (LLM API calls go directly to Anthropic/OpenAI/Google — not to FormBuddy)
+   - Explain data usage honestly; Partner Center will not approve vague descriptions
+
+7. Click **Publish** to submit for review
+
+### Key Differences from Chrome Web Store
+
+| Item | Chrome Web Store | Edge Add-ons |
+|---|---|---|
+| Registration fee | $5 one-time | Free |
+| Dashboard URL | chrome.google.com/webstore/devconsole | partner.microsoft.com/dashboard/microsoftedge |
+| Review time | 1–3 business days | 1–7 business days |
+| Screenshot sizes | 1280×800 or 640×400 | 1280×800 recommended |
+| Required permissions justification | In dashboard UI | In dashboard UI (similar flow) |
+| Developer mode URL | `chrome://extensions` | `edge://extensions` |
+
+### Verify Before Submitting on Edge
+
+1. Open `edge://extensions`
+2. Enable **Developer mode** (left sidebar toggle)
+3. Click **Load unpacked** → select the `dist/` folder
+4. Confirm the extension loads, the side panel opens, and the form-fill flow works end-to-end
+
+---
+
+## 9. Review Process
 
 ### Timeline
 - Initial review typically takes **1–3 business days** for a new submission
@@ -374,7 +438,7 @@ The dashboard requires written justification for certain permissions. Use these:
 
 ---
 
-## 9. Post-Publish Maintenance
+## 10. Post-Publish Maintenance
 
 ### Releasing Updates
 

@@ -11,7 +11,9 @@
     .badge { display: inline-block; background: #ede9fe; color: #6366f1; border: 1px solid #c4b5fd; border-radius: 99px; padding: 4px 14px; font-size: 13px; font-weight: 700; margin-bottom: 20px; }
     h1 { font-size: 42px; font-weight: 900; color: #1f2937; line-height: 1.15; margin-bottom: 16px; }
     .sub { font-size: 18px; color: #6b7280; line-height: 1.6; max-width: 540px; margin: 0 auto 36px; }
+    .cta-group { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
     .cta { display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; border-radius: 12px; font-weight: 700; font-size: 16px; text-decoration: none; box-shadow: 0 4px 18px rgba(99,102,241,0.35); }
+    .cta-edge { background: linear-gradient(135deg, #0078d7, #005a9e); box-shadow: 0 4px 18px rgba(0,120,215,0.35); }
     .features { max-width: 720px; margin: 60px auto; padding: 0 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
     .feature { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
     .feature h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; color: #1f2937; }
@@ -23,12 +25,17 @@
 </head>
 <body>
   <div class="hero">
-    <div class="badge">Chrome Extension · Free · Open Source</div>
+    <div class="badge">Chrome & Edge Extension · Free · Open Source</div>
     <h1>Fill any form from<br>your own documents</h1>
     <p class="sub">FormBuddy reads your PDFs, passport scans, and tax forms locally — then suggests the right value for every field on any website. Private by design.</p>
-    <a class="cta" href="https://chrome.google.com/webstore/detail/formbuddy" target="_blank">
-      ➕ Add to Chrome — It's Free
-    </a>
+    <div class="cta-group">
+      <a class="cta" href="https://chrome.google.com/webstore/detail/formbuddy" target="_blank">
+        ➕ Add to Chrome — It's Free
+      </a>
+      <a class="cta cta-edge" href="https://microsoftedge.microsoft.com/addons/detail/formbuddy" target="_blank">
+        ➕ Add to Edge — It's Free
+      </a>
+    </div>
   </div>
 
   <div class="features">
@@ -65,6 +72,7 @@
   </div>
 
   <footer>
+    © 2026 Cairn Labs ·
     <a href="https://github.com/venkateshpoosarla/FormBuddy" target="_blank">GitHub</a> ·
     <a href="privacy.html">Privacy Policy</a> ·
     <a href="https://github.com/venkateshpoosarla/FormBuddy/issues" target="_blank">Support</a>

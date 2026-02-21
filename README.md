@@ -4,6 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-6366f1.svg)](LICENSE)
 [![Chrome Web Store](https://img.shields.io/badge/Chrome_Web_Store-v1.0.0-4285F4?logo=googlechrome&logoColor=white)](https://chrome.google.com/webstore/detail/formbuddy)
+[![Edge Add-ons](https://img.shields.io/badge/Edge_Add--ons-v1.0.0-0078D7?logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/formbuddy)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-green)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 
 ---
@@ -47,9 +48,10 @@ FormBuddy uses your own API key — no FormBuddy subscription or monthly fee.
 
 ## Getting started
 
-### Install from Chrome Web Store
+### Install from a browser store
 
 [**Add to Chrome →**](https://chrome.google.com/webstore/detail/formbuddy)
+[**Add to Microsoft Edge →**](https://microsoftedge.microsoft.com/addons/detail/formbuddy)
 
 ### Run locally from source
 
@@ -60,10 +62,11 @@ npm install
 npm run build
 ```
 
-Then in Chrome:
-1. Go to `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked** → select the `dist/` folder
+Then load the unpacked extension:
+
+**Chrome:** Go to `chrome://extensions` → Enable **Developer mode** → **Load unpacked** → select `dist/`
+
+**Edge:** Go to `edge://extensions` → Enable **Developer mode** → **Load unpacked** → select `dist/`
 
 ---
 
@@ -72,7 +75,7 @@ Then in Chrome:
 | Layer | Technology |
 |---|---|
 | Language | TypeScript |
-| Platform | Chrome Extension — Manifest V3 |
+| Platform | Chrome & Edge Extension — Manifest V3 |
 | Build | Vite + `@crxjs/vite-plugin` |
 | UI | React + Tailwind CSS |
 | PDF parsing | `pdfjs-dist` + Tesseract.js (OCR) |
@@ -124,4 +127,4 @@ Issues and pull requests are welcome. Please open an issue first to discuss sign
 
 ## License
 
-[MIT](LICENSE) © 2026 Venkatesh Poosarla
+[MIT](LICENSE) © 2026 Cairn Labs
