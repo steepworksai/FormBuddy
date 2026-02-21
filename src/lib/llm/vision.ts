@@ -53,6 +53,19 @@ export function canvasToBase64(canvas: HTMLCanvasElement): { base64: string; med
   return { base64, mediaType: 'image/jpeg' }
 }
 
+function inferImageMediaType(file: File): ImageMediaType {
+  const t = (file.type || '').toLowerCase()
+  if (t === 'image/png' || t === 'image/jpeg' || t === 'image/webp') return t
+
+  const name = (file.name || '').toLowerCase()
+  if (name.endsWith('.png')) return 'image/png'
+  if (name.endsWith('.webp')) return 'image/webp'
+  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg'
+
+  // Safe fallback for unknown/empty types.
+  return 'image/jpeg'
+}
+
 /** Convert a File to a base64 string, preserving its media type. */
 export async function fileToBase64(file: File): Promise<{ base64: string; mediaType: ImageMediaType }> {
   const buffer = await file.arrayBuffer()
@@ -60,6 +73,6 @@ export async function fileToBase64(file: File): Promise<{ base64: string; mediaT
   let binary = ''
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
   const base64 = btoa(binary)
-  const mediaType = (file.type as ImageMediaType) || 'image/jpeg'
+  const mediaType = inferImageMediaType(file)
   return { base64, mediaType }
 }

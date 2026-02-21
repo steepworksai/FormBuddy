@@ -142,17 +142,11 @@ export async function indexDocument(
 
   } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
     onPhase?.('ocr')
-    try {
-      const result = await extractTextFromImage(file, onProgress, llmConfig)
-      pages = result.pages
-      pageCount = result.pageCount
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.warn(`[FormBuddy] OCR failed for image ${file.name}:`, message)
-      // Index with empty text so the file appears in the manifest
-      pages = [{ page: 1, rawText: '', fields: [] }]
-      pageCount = 1
-    }
+    // For images, OCR is required for useful indexing. If it fails, surface an error
+    // so the UI can show the reason instead of silently writing an empty index entry.
+    const result = await extractTextFromImage(file, onProgress, llmConfig)
+    pages = result.pages
+    pageCount = result.pageCount
 
   } else {
     // Plain text / note
