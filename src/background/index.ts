@@ -43,6 +43,53 @@ let pageHistory: string[] = []
 const usedFieldIds = new Set<string>()
 const rejectedFieldIds = new Set<string>()
 
+/**
+ * Ensure the content script is alive in the given tab, then send a message.
+ * Always injects the content script first — the script's __FORMBUDDY_CONTENT_INIT__
+ * guard makes double-injection a safe no-op on tabs that already have it loaded.
+ * This avoids the "Receiving end does not exist" error on tabs that were open
+ * before the extension was installed or reloaded.
+ */
+/**
+ * Reload a tab and resolve when it reaches status 'complete'.
+ * Times out after 10 seconds to avoid hanging forever.
+ */
+function reloadAndWait(tabId: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(onUpdated)
+      reject(new Error('Page took too long to reload. Try again.'))
+    }, 10_000)
+
+    function onUpdated(updatedTabId: number, changeInfo: { status?: string }) {
+      if (updatedTabId !== tabId || changeInfo.status !== 'complete') return
+      chrome.tabs.onUpdated.removeListener(onUpdated)
+      clearTimeout(timeout)
+      resolve()
+    }
+
+    chrome.tabs.onUpdated.addListener(onUpdated)
+    chrome.tabs.reload(tabId)
+  })
+}
+
+/**
+ * Ensure the content script is alive in the given tab, then send a message.
+ * Always injects the content script first — the script's __FORMBUDDY_CONTENT_INIT__
+ * guard makes double-injection a safe no-op on tabs that already have it loaded.
+ */
+async function sendToTab(tabId: number, message: unknown): Promise<unknown> {
+  const manifest = chrome.runtime.getManifest()
+  const files = manifest.content_scripts?.[0]?.js ?? []
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files })
+  } catch {
+    // Restricted URL (chrome://, file://) or page not ready — proceed anyway;
+    // if the script is already running the send will still succeed.
+  }
+  return await chrome.tabs.sendMessage(tabId, message)
+}
+
 function logFormKv(step: string, meta?: Record<string, unknown>): void {
   if (meta) {
     console.log(`[FormBuddy][FormKV] ${step}`, meta)
@@ -745,11 +792,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
         if (!tab?.id) {
-          sendResponse({ ok: false, fields: [] })
+          sendResponse({ ok: false, fields: [], reason: 'No active tab found.' })
           return
         }
-        const result = await chrome.tabs.sendMessage(tab.id, { type: 'REQUEST_FORM_SCHEMA' })
-        sendResponse({ ok: true, fields: (result?.fields ?? []) as Array<{ fieldLabel: string }> })
+        if (tab.url && /^(chrome|chrome-extension|edge|about):/i.test(tab.url)) {
+          sendResponse({ ok: false, fields: [], reason: 'Cannot scan browser internal pages. Navigate to a web form first.' })
+          return
+        }
+        await reloadAndWait(tab.id)
+        const result = await sendToTab(tab.id, { type: 'REQUEST_FORM_SCHEMA' })
+        sendResponse({ ok: true, fields: ((result as { fields?: unknown })?.fields ?? []) as Array<{ fieldLabel: string }> })
       } catch (err) {
         sendResponse({ ok: false, fields: [], reason: err instanceof Error ? err.message : String(err) })
       }
@@ -770,11 +822,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, reason: 'No active tab found.' })
           return
         }
-        const result = await chrome.tabs.sendMessage(tab.id, {
+        const result = await sendToTab(tab.id, {
           type: 'BULK_AUTOFILL',
           payload: { mappings },
         })
-        sendResponse({ ok: true, ...result })
+        sendResponse({ ok: true, ...(result as object) })
       } catch (err) {
         sendResponse({ ok: false, reason: err instanceof Error ? err.message : String(err) })
       }

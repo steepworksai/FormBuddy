@@ -1,4 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  Camera,
+  Settings2,
+  Trash2,
+  RotateCw,
+  HelpCircle,
+  Zap,
+  Copy,
+  Check,
+  X,
+  FolderOpen,
+  Loader2,
+} from 'lucide-react'
+import { startTour, isTourDone } from './tour'
 import { requestFolderAccess, listFiles } from '../lib/folder/access'
 import { writeFileToFolder } from '../lib/folder/access'
 import { indexDocument } from '../lib/indexing/indexer'
@@ -26,21 +40,13 @@ interface FileEntry {
   error?: string
 }
 
-interface LookupResult {
-  id: string
-  label: string
-  value: string
-  sourceFile: string
-  sourcePage?: number
-  sourceText: string
-}
-
-interface ManualFieldResult {
+interface FillResult {
   id: string
   fieldLabel: string
   value: string
   sourceFile: string
   sourcePage?: number
+  filled: boolean
 }
 
 function getErrorMessage(err: unknown, fallback = 'Unknown error'): string {
@@ -177,27 +183,29 @@ export default function SidePanel() {
   const [busy, setBusy]           = useState(false)
   const [noLLM, setNoLLM]         = useState(false)
   const [refreshed, setRefreshed] = useState(false)
-  const [indexedDocs, setIndexedDocs] = useState<DocumentIndex[]>([])
-  const [lookupQuery, setLookupQuery] = useState('')
-  const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [copyLog, setCopyLog] = useState<Array<{ label: string; value: string; copiedAt: string }>>([])
   const [navInfo, setNavInfo] = useState<{ pageIndex: number; domain: string; url: string } | null>(null)
   const [screenshotStatus, setScreenshotStatus] = useState<'idle' | 'indexing' | 'ready' | 'error'>('idle')
-  const [quickNote, setQuickNote] = useState('')
   const [dropActive, setDropActive] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
-  const [fieldsToFetch, setFieldsToFetch] = useState('')
-  const [manualFetchBusy, setManualFetchBusy] = useState(false)
-  const [manualFieldResults, setManualFieldResults] = useState<ManualFieldResult[]>([])
-  const [manualCopiedId, setManualCopiedId] = useState<string | null>(null)
-  const [autoFillBusy, setAutoFillBusy] = useState(false)
-  const [autoFillStatus, setAutoFillStatus] = useState<string | null>(null)
+  const [fillBusy, setFillBusy] = useState(false)
+  const [fillDone, setFillDone] = useState(false)
+  const [fillPhase, setFillPhase] = useState<'scanning' | 'fetching' | 'filling' | null>(null)
+  const [fillResults, setFillResults] = useState<FillResult[]>([])
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [tableCollapsed, setTableCollapsed] = useState(false)
   const [cacheCleared, setCacheCleared] = useState(false)
 
   // Persist between renders without triggering re-renders
   const dirHandleRef       = useRef<FileSystemDirectoryHandle | null>(null)
   const rawFilesRef        = useRef<File[]>([])
   const selectedFilesRef   = useRef<Set<string>>(new Set())
+
+  // Auto-start tour on very first visit
+  useEffect(() => {
+    void isTourDone().then(done => {
+      if (!done) startTour(false)
+    })
+  }, [])
 
   useEffect(() => {
     const testHooks = window as unknown as {
@@ -239,9 +247,7 @@ export default function SidePanel() {
 
       if (msg.type === 'PAGE_NAVIGATED' && msg.payload?.url) {
         // Every navigation is a potentially different form — clear previous results
-        setFieldsToFetch('')
-        setManualFieldResults([])
-        setAutoFillStatus(null)
+        setFillResults([])
         setNavInfo({
           pageIndex: msg.payload.pageIndex ?? 1,
           domain: msg.payload.domain ?? '',
@@ -252,16 +258,6 @@ export default function SidePanel() {
 
       if (msg.type === 'CAPTURE_SCREENSHOT_REQUEST') {
         void handleCaptureScreenshot()
-        return
-      }
-
-      if (msg.type === 'QUICK_ADD' && typeof msg.payload?.content === 'string') {
-        void handleSaveTextNote(msg.payload.content, true)
-        return
-      }
-
-      if (msg.type === 'SELECTION_CHANGED' && typeof msg.payload?.text === 'string') {
-        setLookupQuery(msg.payload.text)
         return
       }
 
@@ -366,10 +362,13 @@ export default function SidePanel() {
     const documents: DocumentIndex[] = []
     const filter = selectedFilesRef.current
 
+    console.log('[FormBuddy][SP] syncContextToBackground: manifest has', manifest.documents.length, 'doc(s)', manifest.documents.map(d => d.fileName))
+
     for (const doc of manifest.documents) {
       // When the user has checked specific files, only include those
       if (filter.size > 0 && !filter.has(doc.fileName)) continue
       const entry = await readIndexEntry(dirHandle, doc.indexFile)
+      console.log('[FormBuddy][SP] readIndexEntry', doc.indexFile, entry ? 'OK' : 'NULL')
       if (!entry) continue
       if (doc.searchIndexFile) {
         const searchIndex = await readSearchIndexEntry(dirHandle, doc.searchIndexFile)
@@ -377,8 +376,6 @@ export default function SidePanel() {
       }
       documents.push(entry)
     }
-    setIndexedDocs(documents)
-
     const ack = await chrome.runtime.sendMessage({
       type: 'CONTEXT_UPDATED',
       payload: { documents },
@@ -524,105 +521,6 @@ export default function SidePanel() {
     return `screenshot-${yyyy}-${mm}-${dd}-${hh}${min}.png`
   }
 
-  const lookupResults = useMemo((): LookupResult[] => {
-    const q = lookupQuery.trim().toLowerCase()
-    if (!q) return []
-
-    const tokens = q.split(/\s+/).filter(Boolean)
-    const scored: Array<LookupResult & { score: number }> = []
-
-    for (const doc of indexedDocs) {
-      if (doc.searchIndex?.autofill) {
-        for (const [key, value] of Object.entries(doc.searchIndex.autofill)) {
-          const keyReadable = key.replace(/_/g, ' ')
-          const keyScore = tokens.reduce((acc, token) => acc + (keyReadable.includes(token) ? 4 : 0), 0)
-          const valueScore = tokens.reduce((acc, token) => acc + (value.toLowerCase().includes(token) ? 2 : 0), 0)
-          const score = keyScore + valueScore
-          if (!score) continue
-
-          scored.push({
-            id: `${doc.id}-autofill-${key}-${value}`,
-            label: keyReadable.replace(/\b\w/g, c => c.toUpperCase()),
-            value,
-            sourceFile: doc.fileName,
-            sourcePage: 1,
-            sourceText: keyReadable,
-            score: score + 40,
-          })
-        }
-      }
-
-      if (doc.searchIndex?.items?.length) {
-        for (const item of doc.searchIndex.items) {
-          const label = item.fieldLabel.toLowerCase()
-          const value = item.value.toLowerCase()
-          const aliasScore = (item.aliases ?? []).reduce(
-            (acc, alias) => acc + tokens.reduce((inner, token) => inner + (alias.toLowerCase().includes(token) ? 1 : 0), 0),
-            0
-          )
-          const labelScore = tokens.reduce((acc, token) => acc + (label.includes(token) ? 3 : 0), 0)
-          const valueScore = tokens.reduce((acc, token) => acc + (value.includes(token) ? 2 : 0), 0)
-          const score = labelScore + valueScore + aliasScore
-          if (!score) continue
-
-          scored.push({
-            id: `${doc.id}-search-${item.fieldLabel}-${item.value}`,
-            label: item.fieldLabel,
-            value: item.value,
-            sourceFile: doc.fileName,
-            sourcePage: 1,
-            sourceText: item.sourceText || item.value,
-            score: score + 30,
-          })
-        }
-      }
-
-      for (const page of doc.pages) {
-        for (const field of page.fields) {
-          const label = field.label.toLowerCase()
-          const value = field.value.toLowerCase()
-          const labelScore = tokens.reduce((acc, token) => acc + (label.includes(token) ? 2 : 0), 0)
-          const valueScore = tokens.reduce((acc, token) => acc + (value.includes(token) ? 1 : 0), 0)
-          const score = labelScore + valueScore
-          if (!score) continue
-
-          scored.push({
-            id: `${doc.id}-${page.page}-${field.label}-${field.value}`,
-            label: field.label,
-            value: field.value,
-            sourceFile: doc.fileName,
-            sourcePage: page.page,
-            sourceText: field.boundingContext || field.value,
-            score: score + 10,
-          })
-        }
-      }
-    }
-
-    const deduped = new Map<string, LookupResult & { score: number }>()
-    for (const item of scored) {
-      const key = `${item.value}|${item.sourceFile}|${item.sourcePage ?? 0}`
-      const existing = deduped.get(key)
-      if (!existing || item.score > existing.score) deduped.set(key, item)
-    }
-
-    return [...deduped.values()]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 12)
-      .map(({ score: _score, ...rest }) => rest)
-  }, [lookupQuery, indexedDocs])
-
-  async function copyLookupValue(item: LookupResult): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(item.value)
-      setCopiedId(item.id)
-      setCopyLog(prev => [{ label: item.label, value: item.value, copiedAt: new Date().toISOString() }, ...prev].slice(0, 20))
-      setTimeout(() => setCopiedId(null), 1200)
-    } catch {
-      setError('Clipboard copy failed. Please copy manually.')
-    }
-  }
-
   async function handleCaptureScreenshot(): Promise<void> {
     const dirHandle = dirHandleRef.current
     if (!dirHandle) {
@@ -740,122 +638,84 @@ export default function SidePanel() {
     await processDroppedFiles(Array.from(event.dataTransfer.files))
   }
 
-  async function handleSaveTextNote(noteOverride?: string, fromQuickAdd = false): Promise<void> {
+  async function handleScanAndFill(): Promise<void> {
     const dirHandle = dirHandleRef.current
     if (!dirHandle) {
-      setError('Choose a folder before saving notes.')
-      return
-    }
-
-    const content = (noteOverride ?? quickNote).trim()
-    if (!content) return
-
-    const now = new Date()
-    const noteName = `note-${now.toISOString().replace(/[:.]/g, '-')}.txt`
-    const noteFile = new File([content], noteName, { type: 'text/plain' })
-
-    setFiles(prev => [{ name: noteName, size: noteFile.size, status: 'pending' }, ...prev])
-    await addFileToContext(noteFile)
-
-    if (!fromQuickAdd) setQuickNote('')
-  }
-
-  function parseRequestedFields(input: string): string[] {
-    return input
-      .split(/\n|,/)
-      .map(v => v.trim())
-      .filter(Boolean)
-      .slice(0, 25)
-  }
-
-  async function handleManualFieldFetch(): Promise<void> {
-    const fields = parseRequestedFields(fieldsToFetch)
-    console.log('[FormBuddy][SP] handleManualFieldFetch fired', { fieldCount: fields.length, fields })
-
-    if (!fields.length) {
-      setError('Paste one or more field names to fetch.')
-      return
-    }
-    const dirHandle = dirHandleRef.current
-    if (!dirHandle) {
-      console.warn('[FormBuddy][SP] No folder selected — aborting fetch')
       setError('Choose a folder first.')
       return
     }
 
-    setManualFetchBusy(true)
+    setFillBusy(true)
+    setFillDone(false)
+    setFillPhase('scanning')
+    setFillResults([])
+    setTableCollapsed(false)
     setError(null)
-    try {
-      console.log('[FormBuddy][SP] Syncing context to background…', {
-        activeFilter: selectedFilesRef.current.size,
-        filteredTo: [...selectedFilesRef.current],
-      })
-      const syncedDocs = await syncContextToBackground(dirHandle)
-      console.log('[FormBuddy][SP] Context synced', {
-        documentCount: syncedDocs.length,
-        documents: syncedDocs.map(d => d.fileName),
-      })
 
-      if (!syncedDocs.length) {
-        console.warn('[FormBuddy][SP] No documents in context — fetch aborted')
-        setError('No indexed documents are selected.')
-        setManualFieldResults([])
+    try {
+      // Step 1: Detect form fields on the active page
+      const scanResp = await chrome.runtime.sendMessage({ type: 'GET_PAGE_FIELDS' }) as
+        | { ok: boolean; fields: Array<{ fieldLabel: string }>; reason?: string }
+        | undefined
+      const labels = (scanResp?.fields ?? []).map(f => f.fieldLabel.trim()).filter(Boolean)
+      if (!labels.length) {
+        setError(scanResp?.reason ?? 'No form fields detected. Make sure you are on a web form.')
         return
       }
 
-      console.log('[FormBuddy][SP] Sending MANUAL_FIELD_FETCH', { fields, rawInput: fieldsToFetch })
-      const response = await chrome.runtime.sendMessage({
+      // Step 2: Push indexed docs to background
+      setFillPhase('fetching')
+      const syncedDocs = await syncContextToBackground(dirHandle)
+      if (!syncedDocs.length) {
+        setError('No indexed documents are selected.')
+        return
+      }
+
+      // Step 3: Find matching values from documents
+      const fetchResp = await chrome.runtime.sendMessage({
         type: 'MANUAL_FIELD_FETCH',
-        payload: { fields, rawInput: fieldsToFetch },
+        payload: { fields: labels },
       }) as {
         ok?: boolean
         message?: string
         reason?: string
-        results?: Array<{
-          fieldLabel: string
-          value: string
-          sourceFile: string
-          sourcePage?: number
-        }>
+        results?: Array<{ fieldLabel: string; value: string; sourceFile: string; sourcePage?: number }>
       } | undefined
-      console.log('[FormBuddy][SP] MANUAL_FIELD_FETCH response', response)
 
-      if (!response?.ok) {
-        console.warn('[FormBuddy][SP] Response not ok', { message: response?.message, reason: response?.reason })
-        setError(response?.message || 'Could not fetch fields from selected docs.')
-        setManualFieldResults([])
+      if (!fetchResp?.ok) {
+        setError(fetchResp?.message || 'Could not match field values from your documents.')
         return
       }
-      const results = (response.results ?? []).map((item, idx) => ({
-        id: `${item.fieldLabel}-${item.value}-${idx}`,
+      const matched = (fetchResp.results ?? []).map((item, idx) => ({
+        id: `${item.fieldLabel}-${idx}`,
         fieldLabel: item.fieldLabel,
         value: item.value,
         sourceFile: item.sourceFile,
         sourcePage: item.sourcePage,
+        filled: false,
       }))
-      console.log('[FormBuddy][SP] Parsed results', { count: results.length, results })
-      setManualFieldResults(results)
-      if (!results.length) {
-        console.warn('[FormBuddy][SP] No results returned', { reason: response.reason })
-        setError(response.reason || 'No matching values found for the requested fields.')
+      if (!matched.length) {
+        setError(fetchResp.reason || 'No matching values found in your documents.')
+        return
       }
-    } catch (err) {
-      console.error('[FormBuddy][SP] handleManualFieldFetch threw', err)
-      setError(getErrorMessage(err, 'Failed to fetch fields from docs.'))
-    } finally {
-      setManualFetchBusy(false)
-    }
-  }
 
-  async function handlePullPageFields(): Promise<void> {
-    const response = await chrome.runtime.sendMessage({ type: 'GET_PAGE_FIELDS' }) as
-      | { ok: boolean; fields: Array<{ fieldLabel: string }>; reason?: string }
-      | undefined
-    const labels = (response?.fields ?? [])
-      .map(f => f.fieldLabel.trim())
-      .filter(Boolean)
-    if (labels.length) {
-      setFieldsToFetch(labels.join('\n'))
+      // Step 4: Auto-fill the form
+      setFillPhase('filling')
+      const fillResp = await chrome.runtime.sendMessage({
+        type: 'BULK_AUTOFILL',
+        payload: { mappings: matched.map(r => ({ fieldLabel: r.fieldLabel, value: r.value })) },
+      }) as { ok: boolean; filled?: number; skipped?: string[]; reason?: string } | undefined
+
+      const skippedSet = new Set(fillResp?.skipped ?? [])
+      const results = matched.map(r => ({ ...r, filled: !skippedSet.has(r.fieldLabel) }))
+      setFillResults(results)
+      setFillDone(true)
+
+    } catch (err) {
+      setError(getErrorMessage(err, 'Scan & fill failed. Please try again.'))
+    } finally {
+      setFillBusy(false)
+      setFillPhase(null)
     }
   }
 
@@ -867,38 +727,13 @@ export default function SidePanel() {
     setTimeout(() => setCacheCleared(false), 2500)
   }
 
-  async function handleAutoFill(): Promise<void> {
-    if (!manualFieldResults.length) return
-    setAutoFillBusy(true)
-    setAutoFillStatus(null)
+  async function copyValue(id: string, value: string): Promise<void> {
     try {
-      const mappings = manualFieldResults.map(r => ({ fieldLabel: r.fieldLabel, value: r.value }))
-      const response = await chrome.runtime.sendMessage({
-        type: 'BULK_AUTOFILL',
-        payload: { mappings },
-      }) as { ok: boolean; filled?: number; total?: number; skipped?: string[]; reason?: string } | undefined
-
-      if (response?.ok) {
-        const { filled = 0, total = mappings.length } = response
-        setAutoFillStatus(`Filled ${filled} of ${total} field${total !== 1 ? 's' : ''}`)
-      } else {
-        setAutoFillStatus(response?.reason ?? 'Auto fill failed.')
-      }
-    } catch (err) {
-      setAutoFillStatus(err instanceof Error ? err.message : 'Auto fill failed.')
-    } finally {
-      setAutoFillBusy(false)
-      setTimeout(() => setAutoFillStatus(null), 4000)
-    }
-  }
-
-  async function copyManualFieldValue(item: ManualFieldResult): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(item.value)
-      setManualCopiedId(item.id)
-      setTimeout(() => setManualCopiedId(null), 1200)
+      await navigator.clipboard.writeText(value)
+      setCopiedId(id)
+      setTimeout(() => setCopiedId(null), 1200)
     } catch {
-      setError('Clipboard copy failed. Please copy manually.')
+      setError('Clipboard copy failed.')
     }
   }
 
@@ -917,17 +752,20 @@ export default function SidePanel() {
               style={styles.iconBtn}
               onClick={() => void handleCaptureScreenshot()}
               disabled={busy || screenshotStatus === 'indexing'}
-              title="Capture screenshot (Cmd/Ctrl+Shift+S)"
+              title="Capture screenshot"
             >
-              {screenshotStatus === 'indexing' ? '⏳' : '📸'}
+              {screenshotStatus === 'indexing'
+                ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                : <Camera size={16} />}
             </button>
           )}
           <button
+            id="fb-settings-btn"
             style={styles.iconBtn}
             onClick={openSettings}
             title="Settings"
           >
-            ⚙️
+            <Settings2 size={16} />
           </button>
           {hasFolder && (
             <button
@@ -935,7 +773,7 @@ export default function SidePanel() {
               onClick={() => void handleClearCache()}
               title="Clear field cache"
             >
-              {cacheCleared ? '✓' : '🗑️'}
+              {cacheCleared ? <Check size={16} color="#059669" /> : <Trash2 size={16} />}
             </button>
           )}
           {hasFolder && (
@@ -945,19 +783,47 @@ export default function SidePanel() {
               disabled={busy}
               title="Reload everything"
             >
-              {busy ? '⏳' : refreshed ? '✓' : '↻'}
+              {refreshed
+                ? <Check size={16} color="#059669" />
+                : <RotateCw size={16} style={busy ? { animation: 'spin 1s linear infinite' } : {}} />}
             </button>
           )}
+          <button
+            style={styles.tourBtn}
+            onClick={() => startTour(hasFolder)}
+            title="Take a tour"
+          >
+            <HelpCircle size={14} />
+          </button>
         </div>
       </div>
 
-      {/* Folder button */}
+      {/* Connect documents card */}
       <button
-        style={{ ...styles.button, opacity: busy ? 0.7 : 1 }}
+        id="fb-choose-folder"
+        style={{ ...styles.folderCard, opacity: busy ? 0.75 : 1 }}
         onClick={handleChooseFolder}
         disabled={busy}
       >
-        {busy ? 'Working…' : hasFolder ? '↺ Change Folder' : '📂 Choose Folder'}
+        <span style={styles.folderCardIcon}>
+          {busy
+            ? <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} />
+            : hasFolder
+              ? <RotateCw size={20} />
+              : <FolderOpen size={20} />}
+        </span>
+        <span style={styles.folderCardText}>
+          <span style={styles.folderCardTitle}>
+            {busy ? 'Loading…' : hasFolder ? 'Switch Document Folder' : 'Connect Your Documents'}
+          </span>
+          <span style={styles.folderCardHint}>
+            {busy
+              ? 'Indexing your files, hang tight…'
+              : hasFolder
+                ? `${folderName} · tap to switch to a different folder`
+                : 'Pick a folder of PDFs, images or notes to fill forms from'}
+          </span>
+        </span>
       </button>
 
       {hasFolder && (
@@ -987,10 +853,6 @@ export default function SidePanel() {
       {refreshed && <p style={styles.successMsg}>✓ Refreshed with latest settings</p>}
       {screenshotStatus === 'indexing' && <p style={styles.infoMsg}>Indexing screenshot...</p>}
       {screenshotStatus === 'ready' && <p style={styles.successMsg}>✓ Screenshot indexed and ready</p>}
-      {error     && <p style={styles.errorMsg}>{error}</p>}
-
-      {/* Folder label */}
-      {folderName && <p style={styles.folderName}>📁 {folderName}</p>}
       {navInfo && (
         <div style={styles.navBox}>
           <span style={styles.navText}>
@@ -1001,7 +863,7 @@ export default function SidePanel() {
 
       {/* File list */}
       {files.length > 0 && (
-        <>
+        <div id="fb-file-list">
           {selectedFiles.size > 0 && (
             <div style={styles.filterBanner}>
               <span>Using {selectedFiles.size} of {files.length} file{selectedFiles.size !== 1 ? 's' : ''}</span>
@@ -1026,7 +888,7 @@ export default function SidePanel() {
               </li>
             ))}
           </ul>
-        </>
+        </div>
       )}
 
       {hasFolder && files.length === 0 && !busy && (
@@ -1034,122 +896,118 @@ export default function SidePanel() {
       )}
 
       {hasFolder && (
-        <div style={styles.panelCard}>
-          <div style={styles.sectionTitleRow}>
-            <h2 style={styles.sectionTitle}>Fill From My Docs</h2>
-            <button
-              style={styles.pullBtn}
-              onClick={() => void handlePullPageFields()}
-              title="Pull field labels from the current page"
-            >
-              Scan Form
-            </button>
-          </div>
-          <textarea
-            style={styles.noteInput}
-            value={fieldsToFetch}
-            onChange={e => setFieldsToFetch(e.target.value)}
-            placeholder="Paste field names from form (one per line), for example:\nDriver License Number\nIssue Date\nExpiration Date"
-          />
+        <div id="fb-fill-section" style={styles.panelCard}>
+          <h2 style={styles.sectionTitle}>Fill From My Docs</h2>
+          <p style={styles.sectionHint}>Scans this page's form fields, matches values from your documents, and fills everything automatically.</p>
+
+          {/* Error with retry — shown just above the action button */}
+          {error && (
+            <div style={styles.errorRow}>
+              <p style={styles.errorMsg}>{error}</p>
+              <button style={styles.retryBtn} onClick={() => { setError(null); void handleScanAndFill() }}>
+                <RotateCw size={11} /> Retry
+              </button>
+            </div>
+          )}
+
+          {/* Single action button */}
           <button
-            style={{ ...styles.noteSaveBtn, marginTop: '8px' }}
-            onClick={() => void handleManualFieldFetch()}
-            disabled={!hasFolder || manualFetchBusy}
+            id="fb-scan-btn"
+            style={{ ...styles.fillBtn, opacity: fillBusy ? 0.75 : 1 }}
+            onClick={() => void handleScanAndFill()}
+            disabled={fillBusy}
           >
-            {manualFetchBusy ? 'Fetching...' : 'Find My Values'}
+            {fillBusy ? (
+              <>
+                <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                {fillPhase === 'scanning' ? 'Scanning form…'
+                  : fillPhase === 'fetching' ? 'Finding values…'
+                  : 'Filling form…'}
+              </>
+            ) : (
+              <><Zap size={16} /> Scan &amp; Auto Fill</>
+            )}
           </button>
-          {manualFieldResults.length > 0 && (
-            <>
-              <div style={styles.autoFillRow}>
-                <button
-                  style={styles.autoFillBtn}
-                  onClick={() => void handleAutoFill()}
-                  disabled={autoFillBusy}
-                >
-                  {autoFillBusy ? 'Filling...' : `Auto Fill (${manualFieldResults.length} fields)`}
-                </button>
-                {autoFillStatus && (
-                  <span style={styles.autoFillStatus}>{autoFillStatus}</span>
-                )}
+
+          {/* Hare race status bar */}
+          {(fillBusy || fillDone) && (
+            <div style={{ ...styles.statusBar, ...(fillDone ? styles.statusBarDone : {}) }}>
+              <div style={styles.statusTrack}>
+                <div style={fillDone ? styles.statusTrackDone : styles.statusTrackFill} />
+                <span style={fillDone ? styles.hareDone : styles.hare}>🐇</span>
+                <span style={styles.finishFlag}>{fillDone ? '🏆' : '🏁'}</span>
               </div>
-              <ul style={styles.feedList}>
-                {manualFieldResults.map(item => (
-                  <li key={item.id} style={styles.lookupItem}>
-                    <p style={styles.lookupLabel}>{item.fieldLabel}</p>
-                    <p style={styles.lookupValue}>{item.value}</p>
-                    <p style={styles.lookupSource}>
-                      From: {item.sourceFile}{item.sourcePage ? `, Page ${item.sourcePage}` : ''}
-                    </p>
-                    <button style={styles.copyBtn} onClick={() => void copyManualFieldValue(item)}>
-                      {manualCopiedId === item.id ? 'Copied' : 'Copy'}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
+              <p style={{ ...styles.statusLabel, ...(fillDone ? styles.statusLabelDone : {}) }}>
+                {fillDone
+                  ? `✨ All done! ${fillResults.length} field${fillResults.length !== 1 ? 's' : ''} filled`
+                  : fillPhase === 'scanning'
+                    ? 'Detecting form fields on this page…'
+                    : fillPhase === 'fetching'
+                      ? 'Searching your documents for values…'
+                      : 'Filling the form fields…'}
+              </p>
+            </div>
+          )}
+
+          {/* Results table */}
+          {fillResults.length > 0 && (
+            <div style={styles.tableWrap}>
+              <button
+                style={styles.tableToggle}
+                onClick={() => setTableCollapsed(c => !c)}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <Check size={12} color="#059669" />
+                  {fillResults.length} field{fillResults.length !== 1 ? 's' : ''} filled
+                </span>
+                <span style={{
+                  display: 'inline-block',
+                  transform: tableCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.2s',
+                  fontSize: '10px',
+                  color: '#9ca3af',
+                }}>▼</span>
+              </button>
+              {!tableCollapsed && (
+                <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Field</th>
+                        <th style={styles.th}>Value</th>
+                        <th style={{ ...styles.th, width: '44px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fillResults.map(item => (
+                        <tr key={item.id} style={styles.tr}>
+                          <td style={styles.tdField}>{item.fieldLabel}</td>
+                          <td style={styles.tdValue} title={item.value}>{item.value}</td>
+                          <td style={styles.tdAction}>
+                            <button
+                              style={styles.copyBtn}
+                              onClick={() => void copyValue(item.id, item.value)}
+                              title="Copy value"
+                            >
+                              {copiedId === item.id
+                                ? <Check size={11} color="#059669" />
+                                : <Copy size={11} />}
+                            </button>
+                            {item.filled
+                              ? <Check size={13} color="#059669" style={{ marginLeft: '4px' }} />
+                              : <X size={13} color="#9ca3af" style={{ marginLeft: '4px' }} />}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
 
-      {hasFolder && (
-        <div style={styles.panelCard}>
-          <h2 style={styles.sectionTitle}>Quick Note</h2>
-          <textarea
-            style={styles.noteInput}
-            value={quickNote}
-            onChange={(e) => setQuickNote(e.target.value)}
-            placeholder="Add a note, number, or detail you want FormBuddy to use."
-          />
-          <button style={styles.noteSaveBtn} onClick={() => void handleSaveTextNote()}>
-            Save Note
-          </button>
-        </div>
-      )}
-
-      <div style={styles.panelCard}>
-        <h2 style={styles.sectionTitle}>Search & Copy</h2>
-        <input
-          style={styles.lookupInput}
-          value={lookupQuery}
-          onChange={(e) => setLookupQuery(e.target.value)}
-          placeholder="Search field (for example: passport number)"
-        />
-        {lookupQuery.trim().length === 0 ? (
-          <p style={styles.feedEmpty}>Search your indexed data and copy values directly.</p>
-        ) : lookupResults.length === 0 ? (
-          <p style={styles.feedEmpty}>No matching values found.</p>
-        ) : (
-          <ul style={styles.feedList}>
-            {lookupResults.map(item => (
-              <li key={item.id} style={styles.lookupItem}>
-                <p style={styles.lookupLabel}>{item.label}</p>
-                <p style={styles.lookupValue}>{item.value}</p>
-                <p style={styles.lookupSource}>
-                  From: {item.sourceFile}{item.sourcePage ? `, Page ${item.sourcePage}` : ''}
-                </p>
-                <button style={styles.copyBtn} onClick={() => void copyLookupValue(item)}>
-                  {copiedId === item.id ? 'Copied' : 'Copy'}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div style={styles.panelCard}>
-        <h2 style={styles.sectionTitle}>Copied This Session</h2>
-        {copyLog.length === 0 ? (
-          <p style={styles.feedEmpty}>Copied values will be tracked here.</p>
-        ) : (
-          <ul style={styles.feedList}>
-            {copyLog.map((item, idx) => (
-              <li key={`${item.copiedAt}-${idx}`} style={styles.feedItem}>
-                {item.label} {'->'} {item.value}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
     </div>
   )
 }
@@ -1182,23 +1040,68 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 4px',
     borderRadius: '4px',
   },
-  button: {
-    width: '100%',
-    padding: '8px 12px',
-    fontSize: '14px',
-    fontWeight: 600,
-    background: '#1a73e8',
-    color: '#fff',
+  tourBtn: {
+    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
     border: 'none',
-    borderRadius: '6px',
     cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 700,
+    color: '#fff',
+    width: '22px',
+    height: '22px',
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 0,
+    boxShadow: '0 2px 6px rgba(99,102,241,0.45)',
+    flexShrink: 0,
   },
-  folderName: {
-    margin: '10px 0 4px',
-    fontWeight: 600,
+  folderCard: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '12px 14px',
+    background: '#fff',
+    border: '1.5px solid #e5e7eb',
+    borderRadius: '12px',
+    cursor: 'pointer',
+    textAlign: 'left' as const,
+    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+    transition: 'border-color 0.15s, box-shadow 0.15s',
+  },
+  folderCardIcon: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '38px',
+    height: '38px',
+    borderRadius: '10px',
+    background: 'linear-gradient(135deg, #ede9fe, #ddd6fe)',
+    color: '#7c3aed',
+    flexShrink: 0,
+  },
+  folderCardText: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '2px',
+    minWidth: 0,
+  },
+  folderCardTitle: {
     fontSize: '13px',
-    color: '#444',
-    wordBreak: 'break-all',
+    fontWeight: 700,
+    color: '#1f2937',
+    whiteSpace: 'nowrap' as const,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  folderCardHint: {
+    fontSize: '11px',
+    color: '#6b7280',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
   },
   warningBox: {
     display: 'flex',
@@ -1235,7 +1138,23 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap' as const,
   },
   successMsg: { margin: '8px 0 0', color: '#065f46', fontSize: '12px' },
-  errorMsg:   { margin: '8px 0 0', color: '#d93025', fontSize: '13px' },
+  errorRow: { display: 'flex', alignItems: 'flex-start', gap: '8px', marginTop: '8px' },
+  errorMsg:   { margin: 0, color: '#d93025', fontSize: '13px', flex: 1 },
+  retryBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    flexShrink: 0,
+    background: 'none',
+    border: '1.5px solid #d93025',
+    borderRadius: '6px',
+    color: '#d93025',
+    cursor: 'pointer',
+    fontSize: '11px',
+    fontWeight: 700,
+    padding: '3px 8px',
+    whiteSpace: 'nowrap' as const,
+  },
   infoMsg:    { margin: '8px 0 0', color: '#374151', fontSize: '12px' },
   empty:      { marginTop: '12px', color: '#888', fontSize: '13px' },
   dropZone: {
@@ -1293,27 +1212,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     padding: 0,
   },
-  autoFillRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    marginTop: '8px',
-    marginBottom: '4px',
-  },
-  autoFillBtn: {
-    background: '#1a73e8',
-    border: 'none',
-    borderRadius: '6px',
-    color: '#fff',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: 600,
-    padding: '6px 12px',
-  },
-  autoFillStatus: {
-    fontSize: '12px',
-    color: '#374151',
-  },
   panelCard: {
     marginTop: '14px',
     border: '1px solid #e5e7eb',
@@ -1321,21 +1219,168 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '8px',
     padding: '10px',
   },
-  sectionTitleRow: {
+  statusBar: {
+    marginTop: '10px',
+    padding: '10px 14px 12px',
+    background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)',
+    border: '1.5px solid #ddd6fe',
+    borderRadius: '12px',
+    transition: 'background 0.4s, border-color 0.4s',
+  },
+  statusBarDone: {
+    background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+    border: '1.5px solid #6ee7b7',
+  },
+  statusTrack: {
+    position: 'relative' as const,
+    height: '24px',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  statusTrackFill: {
+    position: 'absolute' as const,
+    left: 0,
+    right: '22px',
+    height: '5px',
+    background: 'linear-gradient(90deg, #818cf8, #a78bfa, #c084fc)',
+    borderRadius: '99px',
+    animation: 'trackPulse 1.4s ease-in-out infinite',
+  },
+  statusTrackDone: {
+    position: 'absolute' as const,
+    left: 0,
+    right: '22px',
+    height: '5px',
+    background: 'linear-gradient(90deg, #34d399, #10b981)',
+    borderRadius: '99px',
+  },
+  hare: {
+    position: 'absolute' as const,
+    fontSize: '20px',
+    lineHeight: 1,
+    top: '50%',
+    transform: 'translateY(-52%)',
+    animation: 'hareRace 1.4s linear infinite',
+    zIndex: 1,
+    filter: 'drop-shadow(0 1px 2px rgba(99,102,241,0.3))',
+  },
+  hareDone: {
+    position: 'absolute' as const,
+    fontSize: '20px',
+    lineHeight: 1,
+    top: '50%',
+    right: '24px',
+    transform: 'translateY(-52%)',
+    zIndex: 1,
+    filter: 'drop-shadow(0 1px 3px rgba(16,185,129,0.4))',
+  },
+  finishFlag: {
+    position: 'absolute' as const,
+    right: 0,
+    fontSize: '16px',
+    lineHeight: 1,
+  },
+  statusLabel: {
+    margin: '7px 0 0',
+    fontSize: '11.5px',
+    color: '#6d28d9',
+    fontWeight: 600,
+    textAlign: 'center' as const,
+    letterSpacing: '0.1px',
+  },
+  statusLabelDone: {
+    color: '#059669',
+  },
+  sectionHint: {
+    margin: '3px 0 10px',
+    fontSize: '11.5px',
+    color: '#6b7280',
+    lineHeight: 1.5,
+  },
+  fillBtn: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '7px',
+    padding: '11px 16px',
+    fontSize: '14px',
+    fontWeight: 700,
+    background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 60%, #a855f7 100%)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    boxShadow: '0 4px 16px rgba(99,102,241,0.4)',
+    letterSpacing: '0.2px',
+  },
+  tableWrap: {
+    marginTop: '10px',
+    border: '1px solid #e5e7eb',
+    borderRadius: '8px',
+    overflow: 'hidden',
+  },
+  tableToggle: {
+    width: '100%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: '6px',
-  },
-  pullBtn: {
-    background: 'none',
-    border: '1px solid #d1d5db',
-    borderRadius: '5px',
-    color: '#374151',
+    padding: '8px 12px',
+    background: '#f9fafb',
+    border: 'none',
+    borderBottom: '1px solid #e5e7eb',
     cursor: 'pointer',
-    fontSize: '11px',
+    fontSize: '12px',
+    fontWeight: 700,
+    color: '#374151',
+    textAlign: 'left' as const,
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse' as const,
+    fontSize: '12px',
+    tableLayout: 'fixed' as const,
+  },
+  th: {
+    padding: '6px 8px',
+    textAlign: 'left' as const,
+    fontWeight: 700,
+    fontSize: '10.5px',
+    color: '#6b7280',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+    background: '#f9fafb',
+    borderBottom: '1px solid #e5e7eb',
+    position: 'sticky' as const,
+    top: 0,
+  },
+  tr: {
+    borderBottom: '1px solid #f3f4f6',
+  },
+  tdField: {
+    padding: '7px 8px',
+    color: '#374151',
     fontWeight: 600,
-    padding: '3px 8px',
+    maxWidth: '80px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+  },
+  tdValue: {
+    padding: '7px 8px',
+    color: '#111827',
+    fontWeight: 700,
+    maxWidth: '90px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+  },
+  tdAction: {
+    padding: '7px 8px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '2px',
   },
   sectionTitle: {
     margin: 0,
@@ -1343,127 +1388,15 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#1f2937',
     fontWeight: 700,
   },
-  feedEmpty: {
-    margin: '8px 0 0',
-    fontSize: '12px',
-    color: '#777',
-  },
-  feedList: {
-    margin: '8px 0 0',
-    padding: 0,
-    listStyle: 'none',
-    maxHeight: '140px',
-    overflowY: 'auto',
-  },
-  feedItem: {
-    fontSize: '12px',
-    color: '#111',
-    background: '#f7f7f7',
-    borderRadius: '4px',
-    padding: '6px 8px',
-    marginBottom: '6px',
-  },
-  lookupInput: {
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    marginTop: '8px',
-    border: '1px solid #d1d5db',
-    borderRadius: '6px',
-    padding: '8px',
-    fontSize: '12px',
-  },
-  lookupItem: {
-    background: '#f8fafc',
-    border: '1px solid #e5e7eb',
-    borderRadius: '6px',
-    padding: '8px',
-    marginBottom: '8px',
-  },
-  lookupLabel: {
-    margin: '0 0 4px',
-    fontSize: '12px',
-    color: '#374151',
-    fontWeight: 700,
-  },
-  lookupValue: {
-    margin: 0,
-    fontSize: '14px',
-    color: '#111827',
-    fontWeight: 700,
-    wordBreak: 'break-word',
-  },
-  lookupSource: {
-    margin: '6px 0 0',
-    fontSize: '11px',
-    color: '#4b5563',
-  },
   copyBtn: {
-    marginTop: '6px',
-    padding: '4px 8px',
-    fontSize: '11px',
-    borderRadius: '4px',
-    border: '1px solid #2563eb',
-    background: '#eff6ff',
-    color: '#1d4ed8',
-    cursor: 'pointer',
-    fontWeight: 600,
-  },
-  noteInput: {
-    width: '100%',
-    minHeight: '66px',
-    boxSizing: 'border-box' as const,
-    marginTop: '8px',
-    border: '1px solid #d1d5db',
-    borderRadius: '6px',
-    padding: '8px',
-    fontSize: '12px',
-    fontFamily: 'inherit',
-    resize: 'vertical' as const,
-  },
-  noteSaveBtn: {
-    marginTop: '8px',
-    padding: '6px 10px',
-    fontSize: '12px',
-    borderRadius: '5px',
-    border: 'none',
-    background: '#2563eb',
-    color: '#fff',
-    cursor: 'pointer',
-    fontWeight: 600,
-  },
-  mappingStatusBar: {
-    marginTop: '8px',
-    border: '1px solid #d1d5db',
-    borderRadius: '6px',
-    padding: '8px',
-    fontSize: '12px',
-    color: '#374151',
-    background: '#f9fafb',
-  },
-  mappingStatusRunning: {
-    borderColor: '#93c5fd',
-    background: '#eff6ff',
-    color: '#1d4ed8',
-  },
-  mappingStatusReady: {
-    borderColor: '#86efac',
-    background: '#ecfdf5',
-    color: '#166534',
-  },
-  mappingStatusError: {
-    borderColor: '#fca5a5',
-    background: '#fef2f2',
-    color: '#b91c1c',
-  },
-  mappingMetaRow: {
-    marginTop: '8px',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  mappingMetaText: {
-    fontSize: '12px',
-    color: '#374151',
-    fontWeight: 600,
+    justifyContent: 'center',
+    padding: '3px',
+    borderRadius: '4px',
+    border: '1px solid #e5e7eb',
+    background: '#f9fafb',
+    color: '#6b7280',
+    cursor: 'pointer',
   },
 }

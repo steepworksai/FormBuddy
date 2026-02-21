@@ -26,7 +26,11 @@ export async function readManifest(
     const text = await file.text()
     if (!text.trim()) throw new Error('empty')
     return JSON.parse(text) as Manifest
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg !== 'empty') {
+      console.warn('[FormBuddy] readManifest error (returning empty):', msg)
+    }
     return {
       version: '1.0',
       createdAt: new Date().toISOString(),
@@ -56,7 +60,8 @@ export async function readIndexEntry(
     const fileHandle = await indexingDir.getFileHandle(indexFile)
     const file = await fileHandle.getFile()
     return JSON.parse(await file.text()) as DocumentIndex
-  } catch {
+  } catch (err) {
+    console.warn(`[FormBuddy] readIndexEntry failed for ${indexFile}:`, err instanceof Error ? err.message : String(err))
     return null
   }
 }

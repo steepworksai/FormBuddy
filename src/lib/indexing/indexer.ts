@@ -80,8 +80,14 @@ export async function indexDocument(
       )
     )
   if (existing && existing.checksum === checksum && !existing.needsReindex) {
-    console.log(`[FormBuddy] Skipped (unchanged): ${file.name}`)
-    return { status: 'skipped', fileName: file.name }
+    // Verify the index file actually exists — it could be missing if a previous session
+    // wrote the manifest but the <uuid>.json was lost (folder moved, extension reloaded, etc.)
+    const indexExists = await readIndexEntry(dirHandle, `${existing.id}.json`)
+    if (indexExists) {
+      console.log(`[FormBuddy] Skipped (unchanged): ${file.name}`)
+      return { status: 'skipped', fileName: file.name }
+    }
+    console.log(`[FormBuddy] Index file missing for ${file.name} — re-indexing`)
   }
 
   // ── Phase 1: Parse ────────────────────────────────────────
@@ -103,7 +109,10 @@ export async function indexDocument(
         console.warn(`[FormBuddy] PDF too large: ${file.name} (${err.pageCount} pages)`)
         return { status: 'too-large', fileName: file.name, pageCount: err.pageCount }
       }
-      throw new Error(`PDF parse error: ${errorMessage(err)}`)
+      // Parse error — index with empty content so the file still appears in the manifest
+      console.warn(`[FormBuddy] PDF parse failed for ${file.name}:`, errorMessage(err))
+      rawPages = []
+      pageCount = 0
     }
 
     // ── Phase 2 (conditional): OCR scanned pages ──────────
@@ -118,7 +127,14 @@ export async function indexDocument(
       )
       onPhase?.('ocr')
 
-      const ocrResults = await ocrCanvases(scannedPages, onProgress, llmConfig)
+      let ocrResults = new Map<number, string>()
+      try {
+        ocrResults = await ocrCanvases(scannedPages, onProgress, llmConfig)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(`[FormBuddy] OCR failed for ${file.name}:`, message)
+        // Fall back to empty text for scanned pages so the file is still indexed
+      }
 
       // Merge OCR text back into the page list
       pages = rawPages.map(p =>
@@ -132,9 +148,17 @@ export async function indexDocument(
 
   } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
     onPhase?.('ocr')
-    const result = await extractTextFromImage(file, onProgress, llmConfig)
-    pages = result.pages
-    pageCount = result.pageCount
+    try {
+      const result = await extractTextFromImage(file, onProgress, llmConfig)
+      pages = result.pages
+      pageCount = result.pageCount
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn(`[FormBuddy] OCR failed for image ${file.name}:`, message)
+      // Index with empty text so the file appears in the manifest
+      pages = [{ page: 1, rawText: '', fields: [] }]
+      pageCount = 1
+    }
 
   } else {
     // Plain text / note
@@ -183,7 +207,7 @@ export async function indexDocument(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.warn(`[FormBuddy] LLM extraction failed for ${file.name}:`, message)
-      throw new Error(`LLM error: ${message}`)
+      // Do not rethrow — still index the document with the parsed text and no entities
     }
   } else {
     if (llmAlreadyPrepared && previousEntry) {
@@ -195,21 +219,27 @@ export async function indexDocument(
     }
   }
 
-  const localSearchIndex = buildLocalSearchIndex({ pages, entities })
-  searchIndex = localSearchIndex
+  let localSearchIndex
+  try {
+    localSearchIndex = buildLocalSearchIndex({ pages, entities })
+    searchIndex = localSearchIndex
+  } catch (err) {
+    console.warn(`[FormBuddy] buildLocalSearchIndex failed for ${file.name}:`, errorMessage(err))
+    localSearchIndex = undefined
+  }
 
   if (llmConfig?.apiKey) {
     try {
       const allFields = pages.flatMap(page => page.fields)
       const fullText = pages.map(p => p.rawText).join('\n')
       const generatedSearchIndex = await buildSearchIndexWithLLM(fullText, allFields, file.name, llmConfig)
-      searchIndex = mergeSearchIndexes(localSearchIndex, generatedSearchIndex)
+      searchIndex = localSearchIndex ? mergeSearchIndexes(localSearchIndex, generatedSearchIndex) : generatedSearchIndex
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.warn(`[FormBuddy] Search index generation failed for ${file.name}:`, message)
     }
   } else if (previousSearchIndex) {
-    searchIndex = mergeSearchIndexes(localSearchIndex, previousSearchIndex)
+    searchIndex = localSearchIndex ? mergeSearchIndexes(localSearchIndex, previousSearchIndex) : previousSearchIndex
   }
 
   // ── Phase 4: Write ────────────────────────────────────────
@@ -228,7 +258,7 @@ export async function indexDocument(
           : 'image',
     indexedAt: new Date().toISOString(),
     language: 'en',
-    pageCount: pageCount!,
+    pageCount: pageCount ?? 0,
     pages,
     entities,
     summary,
@@ -237,10 +267,21 @@ export async function indexDocument(
       : [],
   }
 
-  await writeIndexEntry(dirHandle, `${id}.json`, indexEntry)
+  try {
+    await writeIndexEntry(dirHandle, `${id}.json`, indexEntry)
+    console.log(`[FormBuddy] writeIndexEntry OK: ${id}.json`)
+  } catch (err) {
+    console.error(`[FormBuddy] writeIndexEntry FAILED for ${file.name}:`, errorMessage(err))
+    throw err
+  }
+
   const searchIndexFile = `${id}.search.index.json`
   if (searchIndex) {
-    await writeSearchIndexEntry(dirHandle, searchIndexFile, searchIndex)
+    try {
+      await writeSearchIndexEntry(dirHandle, searchIndexFile, searchIndex)
+    } catch (err) {
+      console.warn(`[FormBuddy] writeSearchIndexEntry failed for ${file.name}:`, errorMessage(err))
+    }
   }
 
   const updatedManifest = {
@@ -257,7 +298,13 @@ export async function indexDocument(
       ),
     ],
   }
-  await writeManifest(dirHandle, updatedManifest)
+  try {
+    await writeManifest(dirHandle, updatedManifest)
+    console.log(`[FormBuddy] writeManifest OK: ${updatedManifest.documents.length} doc(s) in manifest`)
+  } catch (err) {
+    console.error(`[FormBuddy] writeManifest FAILED for ${file.name}:`, errorMessage(err))
+    throw err
+  }
 
   console.log(`[FormBuddy] Indexed: ${file.name} → ${id}.json`)
   return { status: 'indexed', entry: indexEntry }

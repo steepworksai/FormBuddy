@@ -4,3 +4,6 @@ playwright-report
 test-results
 .test-secrets.local
 /output
+.DS_Store
+.DS_Store
+.DS_Store
