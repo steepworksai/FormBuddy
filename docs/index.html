@@ -8,6 +8,9 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; background: #f9fafb; color: #111827; }
     .hero { max-width: 720px; margin: 0 auto; padding: 80px 24px 60px; text-align: center; }
+    .logo-wrap { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 24px; }
+    .logo-wrap img { width: 64px; height: 64px; border-radius: 16px; box-shadow: 0 4px 16px rgba(99,102,241,0.25); }
+    .logo-wrap span { font-size: 28px; font-weight: 900; color: #1f2937; letter-spacing: -0.5px; }
     .badge { display: inline-block; background: #ede9fe; color: #6366f1; border: 1px solid #c4b5fd; border-radius: 99px; padding: 4px 14px; font-size: 13px; font-weight: 700; margin-bottom: 20px; }
     h1 { font-size: 42px; font-weight: 900; color: #1f2937; line-height: 1.15; margin-bottom: 16px; }
     .sub { font-size: 18px; color: #6b7280; line-height: 1.6; max-width: 540px; margin: 0 auto 36px; }
@@ -29,6 +32,10 @@
 </head>
 <body>
   <div class="hero">
+    <div class="logo-wrap">
+      <img src="icon128.png" alt="FormBuddy logo" />
+      <span>FormBuddy</span>
+    </div>
     <div class="badge">Chrome & Edge Extension · Free · Open Source</div>
     <h1>Fill any form from<br>your own documents</h1>
     <p class="sub">FormBuddy reads your PDFs, passport scans, and tax forms locally — then suggests the right value for every field on any website. Private by design.</p>
