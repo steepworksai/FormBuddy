@@ -42,7 +42,7 @@ FormBuddy uses your own API key — no FormBuddy subscription or monthly fee.
 |---|---|
 | Anthropic | `claude-sonnet-4-6`, `claude-haiku-4-5` |
 | OpenAI | `gpt-4o`, `gpt-4o-mini` |
-| Google | `gemini-2.0-flash`, `gemini-1.5-pro` |
+| Google | `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro` |
 
 ---
 

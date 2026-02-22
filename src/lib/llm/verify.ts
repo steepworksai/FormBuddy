@@ -58,9 +58,11 @@ export async function verifyApiKey(config: LLMConfig): Promise<boolean> {
     if (err instanceof Error) {
       const msg = err.message.toLowerCase()
       if (
+        msg.includes('400') ||
         msg.includes('401') ||
         msg.includes('403') ||
         msg.includes('invalid') ||
+        msg.includes('not valid') ||
         msg.includes('authentication') ||
         msg.includes('api key') ||
         msg.includes('not found') ||

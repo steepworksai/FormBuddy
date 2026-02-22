@@ -18,7 +18,7 @@ const PROVIDERS: { value: LLMProvider; label: string; models: string[]; url: str
   {
     value: 'gemini',
     label: 'Google Gemini',
-    models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro'],
+    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],
     url: 'https://aistudio.google.com/app/apikey',
   },
 ]
@@ -40,8 +40,8 @@ async function clearConfig(): Promise<void> {
 }
 
 export default function Popup() {
-  const [provider, setProvider] = useState<LLMProvider>('anthropic')
-  const [model, setModel]       = useState(PROVIDERS[0].models[0])
+  const [provider, setProvider] = useState<LLMProvider>('gemini')
+  const [model, setModel]       = useState(PROVIDERS[2].models[0])
   const [apiKey, setApiKey]     = useState('')
   const [status, setStatus]     = useState<Status>('idle')
   const [errorMsg, setErrorMsg] = useState('')
@@ -131,12 +131,25 @@ export default function Popup() {
         ))}
       </select>
 
-      <button
-        style={styles.linkButton}
-        onClick={() => chrome.tabs.create({ url: providerInfo.url })}
-      >
-        Get API key from {providerInfo.label} ↗
-      </button>
+      {provider === 'gemini' ? (
+        <div style={styles.freeCallout}>
+          <span style={styles.freeBadge}>FREE</span>
+          <span style={styles.freeText}>No credit card needed · 1,500 requests/day free</span>
+          <button
+            style={styles.freeLink}
+            onClick={() => chrome.tabs.create({ url: providerInfo.url })}
+          >
+            Get your free Gemini key ↗
+          </button>
+        </div>
+      ) : (
+        <button
+          style={styles.linkButton}
+          onClick={() => chrome.tabs.create({ url: providerInfo.url })}
+        >
+          Get API key from {providerInfo.label} ↗
+        </button>
+      )}
 
       {/* Model */}
       <label style={styles.label}>Model</label>
@@ -277,6 +290,37 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '5px',
     cursor: 'pointer',
     fontSize: '13px',
+  },
+  freeCallout: {
+    background: '#f0fdf4',
+    border: '1px solid #bbf7d0',
+    borderRadius: '6px',
+    padding: '8px 10px',
+    marginTop: '6px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '3px',
+  },
+  freeBadge: {
+    display: 'inline-block',
+    background: '#059669',
+    color: '#fff',
+    fontSize: '10px',
+    fontWeight: 700,
+    padding: '1px 6px',
+    borderRadius: '999px',
+    width: 'fit-content',
+  },
+  freeText: { fontSize: '11px', color: '#065f46' },
+  freeLink: {
+    background: 'none',
+    border: 'none',
+    color: '#059669',
+    cursor: 'pointer',
+    fontSize: '11px',
+    padding: '0',
+    textAlign: 'left' as const,
+    fontWeight: 600,
   },
   invalidMsg: { color: '#d93025', fontSize: '12px', marginTop: '8px', margin: '8px 0 0' },
   errorMsg:   { color: '#b45309', fontSize: '12px', marginTop: '8px', margin: '8px 0 0' },

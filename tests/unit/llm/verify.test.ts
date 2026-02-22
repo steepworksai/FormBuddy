@@ -70,4 +70,58 @@ describe('TM3 verifyApiKey', () => {
     })
     expect(result).toBe(true)
   })
+
+  it('returns false for gemini 400 "API key not valid" response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({
+          error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT' },
+        }),
+      })) as unknown as typeof fetch
+    )
+
+    const { verifyApiKey } = await import('../../../src/lib/llm/verify')
+    const result = await verifyApiKey({
+      provider: 'gemini',
+      apiKey: 'bad-key',
+      model: 'gemini-2.0-flash',
+    })
+    expect(result).toBe(false)
+  })
+
+  it('returns false for gemini 403 permission denied response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 403,
+        text: async () => JSON.stringify({
+          error: { code: 403, message: 'Permission denied', status: 'PERMISSION_DENIED' },
+        }),
+      })) as unknown as typeof fetch
+    )
+
+    const { verifyApiKey } = await import('../../../src/lib/llm/verify')
+    const result = await verifyApiKey({
+      provider: 'gemini',
+      apiKey: 'restricted-key',
+      model: 'gemini-2.0-flash',
+    })
+    expect(result).toBe(false)
+  })
+
+  it('throws for gemini network failure (fetch TypeError)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => { throw new TypeError('Failed to fetch') }) as unknown as typeof fetch
+    )
+
+    const { verifyApiKey } = await import('../../../src/lib/llm/verify')
+    await expect(
+      verifyApiKey({ provider: 'gemini', apiKey: 'any', model: 'gemini-2.0-flash' })
+    ).rejects.toThrow('Failed to fetch')
+  })
 })

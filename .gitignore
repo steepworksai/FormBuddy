@@ -6,3 +6,4 @@ test-results
 /output
 *.zip
 .DS_Store
+scripts/test-passport.mjs

@@ -55,24 +55,24 @@ export function startTour(hasFolder: boolean): void {
     },
     {
       popover: {
-        title: '🤖 Frontier Model Support',
+        title: '🤖 Works With Your Favourite AI',
         description: `
           <div class="fb-privacy-grid">
             <div class="fb-privacy-item">
+              <span class="fb-privacy-icon">✨</span>
+              <span><strong>Google Gemini</strong><br/><span style="color:#059669;font-weight:700;">FREE — no credit card needed</span></span>
+            </div>
+            <div class="fb-privacy-item">
               <span class="fb-privacy-icon">🧠</span>
-              <span><strong>Anthropic Claude</strong><br/></span>
+              <span><strong>Anthropic Claude</strong><br/>Best for complex documents</span>
             </div>
             <div class="fb-privacy-item">
               <span class="fb-privacy-icon">⚡</span>
-              <span><strong>OpenAI GPT</strong><br/></span>
+              <span><strong>OpenAI GPT-4o</strong><br/>Fast and reliable</span>
             </div>
             <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">✨</span>
-              <span><strong>Google Gemini</strong><br/></span>
-            </div>
-            <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">🔁</span>
-              <span><strong>Choose the provider you prefer</strong><br/></span>
+              <span class="fb-privacy-icon">🔑</span>
+              <span><strong>Bring your own key</strong><br/>No FormBuddy subscription ever</span>
             </div>
           </div>
         `,
@@ -81,10 +81,11 @@ export function startTour(hasFolder: boolean): void {
     {
       element: '#fb-settings-btn',
       popover: {
-        title: '🧠 Connect an AI Provider',
+        title: '🚀 Start Free in 2 Minutes',
         description: `
-          <p>Open <strong>AI Settings</strong> to add your Anthropic, OpenAI, or Gemini API key.</p>
-          <p>This unlocks smart extraction — FormBuddy will read and understand your documents much more accurately.</p>
+          <p>Open <strong>AI Settings</strong> and connect Google Gemini — it's completely free, no credit card required.</p>
+          <p style="margin-top:8px;">Get your free key at <strong>aistudio.google.com</strong> and paste it in. That's it.</p>
+          <p style="margin-top:8px;font-size:11px;color:#6b7280;">Prefer Claude or GPT-4o? Those work too — just paste your key.</p>
         `,
         side: 'bottom' as const,
         align: 'end' as const,
