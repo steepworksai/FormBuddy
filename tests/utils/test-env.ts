@@ -37,6 +37,6 @@ export function resolveTestDataDir(cwd = process.cwd()): string {
   return (
     process.env.FORMBUDDY_TEST_DATA_DIR ||
     local.FORMBUDDY_TEST_DATA_DIR ||
-    '/Users/venkateshpoosarla/Documents/FormBuddyDocs/'
+    ''
   )
 }

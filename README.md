@@ -30,7 +30,7 @@ FormBuddy reads your PDFs, passport scans, tax forms, and notes — indexes them
 | API keys | Stored in Chrome's encrypted `chrome.storage.local` — never sent to FormBuddy |
 | Analytics | None. No backend server exists. |
 
-See the full [Privacy Policy](https://venkateshpoosarla.github.io/FormBuddy/privacy.html).
+See the full [Privacy Policy](https://steepworksai.github.io/FormBuddy/privacy.html).
 
 ---
 
@@ -56,7 +56,7 @@ FormBuddy uses your own API key — no FormBuddy subscription or monthly fee.
 ### Run locally from source
 
 ```bash
-git clone https://github.com/venkateshpoosarla/FormBuddy.git
+git clone https://github.com/steepworksai/FormBuddy.git
 cd FormBuddy
 npm install
 npm run build
