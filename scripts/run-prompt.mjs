@@ -16,7 +16,7 @@ import OpenAI from 'openai'
 //  CONFIG — edit these values and hit Run
 // ═══════════════════════════════════════════════════════════════
 
-const DOC_PATH = '/Users/venkateshpoosarla/Documents/GitHub/FormBuddy/output/pdf/.indexing/b9c94168-a656-479d-98b1-1e934fad6163.json'
+const DOC_PATH = resolve(__dirname, '..', 'output', 'pdf', '.indexing', 'b9c94168-a656-479d-98b1-1e934fad6163.json')
 
 const FIELDS = `
 Driver License Number

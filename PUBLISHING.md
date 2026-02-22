@@ -379,8 +379,8 @@ The same `formbuddy-v1.0.0.zip` built for Chrome works on Edge without modificat
    - Markets: All markets, or restrict as needed
 
 5. **Properties tab**
-   - Privacy policy URL: `https://venkateshpoosarla.github.io/FormBuddy/privacy.html`
-   - Website URL: `https://venkateshpoosarla.github.io/FormBuddy/`
+   - Privacy policy URL: `https://steepworksai.github.io/FormBuddy/privacy.html`
+   - Website URL: `https://steepworksai.github.io/FormBuddy/`
    - Support URL: your GitHub Issues page
 
 6. **Privacy practices tab**
