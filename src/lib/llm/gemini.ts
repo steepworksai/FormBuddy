@@ -6,6 +6,7 @@ interface GeminiGenerateResponse {
       parts?: Array<{ text?: string }>
     }
   }>
+  error?: { code?: number; message?: string; status?: string }
 }
 
 export async function callGemini(
@@ -36,13 +37,14 @@ export async function callGemini(
     }),
   })
 
+  const data = (await response.json()) as GeminiGenerateResponse
+
   if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Gemini API error (${response.status}): ${errorText}`)
+    const apiMsg = data.error?.message ?? response.statusText
+    throw new Error(`[Gemini ${config.model}] HTTP ${response.status} — ${apiMsg}`)
   }
 
-  const data = (await response.json()) as GeminiGenerateResponse
   const text = data.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('').trim()
-  if (!text) throw new Error('Empty response from Gemini')
+  if (!text) throw new Error(`[Gemini ${config.model}] Empty response`)
   return text
 }

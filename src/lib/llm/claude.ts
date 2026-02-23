@@ -11,15 +11,24 @@ export async function callClaude(
     dangerouslyAllowBrowser: true,
   })
 
-  const response = await client.messages.create({
-    model: config.model,
-    max_tokens: 8096,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userMessage }],
-  })
+  try {
+    const response = await client.messages.create({
+      model: config.model,
+      max_tokens: 8096,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    })
 
-  const block = response.content[0]
-  if (!block) throw new Error('Empty response from Claude')
-  if (block.type !== 'text') throw new Error('Unexpected response type from Claude')
-  return block.text
+    const block = response.content[0]
+    if (!block) throw new Error('Empty response from Claude')
+    if (block.type !== 'text') throw new Error('Unexpected response type from Claude')
+    return block.text
+  } catch (err) {
+    if (err instanceof Anthropic.APIError) {
+      throw new Error(
+        `[Claude ${config.model}] HTTP ${err.status} — ${err.message}`
+      )
+    }
+    throw err
+  }
 }

@@ -316,7 +316,6 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
     .slice(0, 20)
 
   if (!docsPayload.length) {
-    await storeFormKVCache(signature, [])
     return { results: [], reason: 'Documents have no text content yet. Reindex the selected file(s).' }
   }
 
@@ -346,8 +345,9 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
     if (results.length > 0) return { results }
     return { results: [], reason: 'LLM found no values for the requested fields.' }
   } catch (err) {
-    await storeFormKVCache(signature, [])
-    return { results: [], reason: `LLM error: ${err instanceof Error ? err.message : String(err)}` }
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[FormBuddy] LLM mapping failed:', msg)
+    return { results: [], reason: `LLM error: ${msg}` }
   }
 }
 
