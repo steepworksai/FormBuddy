@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { startTour, isTourDone } from './tour'
 import { shortModelName } from '../lib/utils/modelName'
+import { verifyApiKey } from '../lib/llm/verify'
 import { requestFolderAccess, listFiles, writeFileToFolder } from '../lib/folder/access'
 import { indexDocument } from '../lib/indexing/indexer'
 import {
@@ -28,7 +29,7 @@ import {
 } from '../lib/indexing/manifest'
 import { getTypeInfo, isSupported } from '../lib/config/supportedTypes'
 import { MAX_PDF_PAGES } from '../lib/parser/pdf'
-import type { DocumentIndex, FormKVMapping, LLMConfig } from '../types'
+import type { DocumentIndex, FormKVMapping, LLMConfig, LLMProvider } from '../types'
 import type { IndexPhase } from '../lib/indexing/indexer'
 
 interface FileEntry {
@@ -177,6 +178,267 @@ async function markAllForReindex(dirHandle: FileSystemDirectoryHandle): Promise<
   })
 }
 
+const PROVIDERS: { value: LLMProvider; label: string; models: string[]; url: string }[] = [
+  { value: 'anthropic', label: 'Anthropic Claude', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'], url: 'https://console.anthropic.com' },
+  { value: 'openai',    label: 'OpenAI',           models: ['gpt-4o', 'gpt-4o-mini'],                                            url: 'https://platform.openai.com' },
+  { value: 'gemini',    label: 'Google Gemini',    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'],     url: 'https://aistudio.google.com/app/apikey' },
+]
+
+function SettingsPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (model: string) => void }) {
+  const [provider, setProvider] = useState<LLMProvider>('gemini')
+  const [model, setModel]       = useState(PROVIDERS[2].models[0])
+  const [apiKey, setApiKey]     = useState('')
+  const [status, setStatus]     = useState<'idle' | 'verifying' | 'connected' | 'invalid' | 'error'>('idle')
+  const [errorMsg, setErrorMsg] = useState('')
+  useEffect(() => {
+    chrome.storage.local.get('llmConfig', r => {
+      const cfg = r.llmConfig as LLMConfig | undefined
+      if (!cfg) return
+      setProvider(cfg.provider)
+      setModel(cfg.model)
+      setApiKey(cfg.apiKey)
+      setStatus('connected')
+    })
+  }, [])
+
+  const providerInfo = PROVIDERS.find(p => p.value === provider)!
+
+  function handleProviderChange(p: LLMProvider) {
+    setProvider(p)
+    setModel(PROVIDERS.find(x => x.value === p)!.models[0])
+    if (status === 'connected') setStatus('idle')
+  }
+
+  async function handleSave() {
+    const key = apiKey.trim()
+    if (!key) { setStatus('invalid'); setErrorMsg('API key is required.'); return }
+    setStatus('verifying')
+    setErrorMsg('')
+    const config: LLMConfig = { provider, model, apiKey: key }
+    try {
+      const valid = await verifyApiKey(config)
+      if (!valid) { setStatus('invalid'); setErrorMsg('Invalid key — check it and try again.'); return }
+      await new Promise<void>(resolve => chrome.storage.local.set({ llmConfig: config }, resolve))
+      setStatus('connected')
+      onSaved(model)
+      const host = new URL(providerInfo.url).host
+      chrome.tabs.query({ url: `*://${host}/*` }, tabs => {
+        tabs.forEach(t => { if (t.id) chrome.tabs.remove(t.id, () => void chrome.runtime.lastError) })
+      })
+      setTimeout(onClose, 700)
+    } catch {
+      setStatus('error')
+      setErrorMsg('Network error — check your connection and try again.')
+    }
+  }
+
+  async function handleDisconnect() {
+    await new Promise<void>(resolve => chrome.storage.local.remove('llmConfig', resolve))
+    setApiKey('')
+    setStatus('idle')
+    setErrorMsg('')
+  }
+
+  const busy = status === 'verifying'
+  const buttonLabel =
+    status === 'verifying' ? 'Verifying…' :
+    status === 'connected' ? '✓ Connected' :
+    'Verify & Save'
+
+  return (
+    <div style={sp.overlay}>
+      <div style={sp.header}>
+        <span style={sp.title}>AI Settings</span>
+        <button style={sp.closeBtn} onClick={onClose} aria-label="Close settings">
+          <X size={18} />
+        </button>
+      </div>
+      <div style={sp.body}>
+        <label style={sp.label}>Provider</label>
+        <select style={sp.select} value={provider} onChange={e => handleProviderChange(e.target.value as LLMProvider)} disabled={busy}>
+          {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </select>
+
+        {provider === 'gemini' ? (
+          <div style={sp.freeCallout}>
+            <span style={sp.freeBadge}>FREE</span>
+            <span style={sp.freeText}>No credit card needed · 1,500 requests/day free</span>
+            <button style={sp.freeLink} onClick={() => chrome.tabs.create({ url: providerInfo.url })}>
+              Get your free Gemini key ↗
+            </button>
+          </div>
+        ) : (
+          <button style={sp.linkButton} onClick={() => chrome.tabs.create({ url: providerInfo.url })}>
+            Get API key from {providerInfo.label} ↗
+          </button>
+        )}
+
+        <label style={sp.label}>Model</label>
+        <select style={sp.select} value={model} onChange={e => { setModel(e.target.value); if (status === 'connected') setStatus('idle') }} disabled={busy}>
+          {providerInfo.models.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+
+        <label style={sp.label}>API Key</label>
+        <input
+          style={{ ...sp.input, borderColor: status === 'invalid' ? '#d93025' : '#d1d5db' }}
+          type="password"
+          placeholder="Paste your API key here"
+          value={apiKey}
+          onChange={e => { setApiKey(e.target.value); if (status !== 'idle') setStatus('idle') }}
+          disabled={busy}
+        />
+
+        <div style={sp.row}>
+          <button
+            style={{ ...sp.button, opacity: busy ? 0.7 : 1, background: status === 'connected' ? '#059669' : '#1a73e8' }}
+            onClick={() => void handleSave()}
+            disabled={busy || status === 'connected'}
+          >
+            {buttonLabel}
+          </button>
+          {status === 'connected' && (
+            <button style={sp.disconnectButton} onClick={() => void handleDisconnect()}>Disconnect</button>
+          )}
+        </div>
+
+        {status === 'invalid'   && <p style={sp.invalidMsg}>✗ {errorMsg}</p>}
+        {status === 'error'     && <p style={sp.errorMsg_}>⚠ {errorMsg}</p>}
+        {status === 'verifying' && <p style={sp.infoMsg}>Making a test call to verify your key…</p>}
+        {status === 'connected' && <p style={sp.connectedMsg}>● Connected — settings saved</p>}
+      </div>
+    </div>
+  )
+}
+
+const sp: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: '#fff',
+    zIndex: 100,
+    display: 'flex',
+    flexDirection: 'column',
+    fontFamily: 'system-ui, sans-serif',
+    fontSize: '13px',
+    color: '#111',
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '14px 16px 12px',
+    borderBottom: '1px solid #e5e7eb',
+    flexShrink: 0,
+  },
+  title: { fontSize: '15px', fontWeight: 700 },
+  closeBtn: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: '#6b7280',
+    padding: '2px',
+    borderRadius: '4px',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  body: { padding: '4px 16px 16px', overflowY: 'auto' as const, flex: 1 },
+  label: {
+    display: 'block',
+    fontWeight: 600,
+    fontSize: '12px',
+    marginBottom: '4px',
+    marginTop: '14px',
+    color: '#374151',
+  },
+  select: {
+    width: '100%',
+    padding: '7px 8px',
+    borderRadius: '6px',
+    border: '1px solid #d1d5db',
+    fontSize: '13px',
+    boxSizing: 'border-box' as const,
+    background: '#fff',
+  },
+  input: {
+    width: '100%',
+    padding: '7px 8px',
+    borderRadius: '6px',
+    border: '1px solid #d1d5db',
+    fontSize: '13px',
+    boxSizing: 'border-box' as const,
+    outline: 'none',
+  },
+  linkButton: {
+    background: 'none',
+    border: 'none',
+    color: '#1a73e8',
+    cursor: 'pointer',
+    fontSize: '11px',
+    padding: '3px 0 0',
+    display: 'block',
+  },
+  row: { display: 'flex', gap: '8px', marginTop: '16px' },
+  button: {
+    flex: 1,
+    padding: '9px',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontWeight: 700,
+    fontSize: '13px',
+  },
+  disconnectButton: {
+    padding: '9px 14px',
+    background: '#f3f4f6',
+    color: '#374151',
+    border: '1px solid #d1d5db',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+  },
+  freeCallout: {
+    background: '#f0fdf4',
+    border: '1px solid #bbf7d0',
+    borderRadius: '6px',
+    padding: '8px 10px',
+    marginTop: '6px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '3px',
+  },
+  freeBadge: {
+    display: 'inline-block',
+    background: '#059669',
+    color: '#fff',
+    fontSize: '10px',
+    fontWeight: 700,
+    padding: '1px 6px',
+    borderRadius: '999px',
+    width: 'fit-content',
+  },
+  freeText: { fontSize: '11px', color: '#065f46' },
+  freeLink: {
+    display: 'inline-block',
+    marginTop: '2px',
+    background: '#059669',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '6px',
+    padding: '6px 12px',
+    fontSize: '12px',
+    fontWeight: 700,
+    cursor: 'pointer',
+    textAlign: 'center' as const,
+    width: '100%',
+    boxSizing: 'border-box' as const,
+  },
+  invalidMsg:   { color: '#d93025', fontSize: '12px', margin: '10px 0 0' },
+  errorMsg_:    { color: '#b45309', fontSize: '12px', margin: '10px 0 0' },
+  infoMsg:      { color: '#6b7280', fontSize: '11px', margin: '10px 0 0' },
+  connectedMsg: { color: '#059669', fontSize: '12px', fontWeight: 600, margin: '10px 0 0' },
+}
+
 export default function SidePanel() {
   const [files, setFiles]         = useState<FileEntry[]>([])
   const [folderName, setFolderName] = useState<string | null>(null)
@@ -196,6 +458,7 @@ export default function SidePanel() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [tableCollapsed, setTableCollapsed] = useState(false)
   const [cacheCleared, setCacheCleared] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   // Persist between renders without triggering re-renders
   const dirHandleRef       = useRef<FileSystemDirectoryHandle | null>(null)
@@ -537,15 +800,6 @@ export default function SidePanel() {
     return formatSize(f.size)
   }
 
-  function openSettings() {
-    chrome.windows.create({
-      url: chrome.runtime.getURL('src/popup/index.html'),
-      type: 'popup',
-      width: 340,
-      height: 420,
-    })
-  }
-
   const hasFolder = folderName !== null
 
   function screenshotFileName(date: Date): string {
@@ -774,6 +1028,19 @@ export default function SidePanel() {
 
   return (
     <div className="fb-root" style={styles.container}>
+      {settingsOpen && (
+        <SettingsPanel
+          onClose={() => setSettingsOpen(false)}
+          onSaved={(savedModel) => {
+            setActiveModel(shortModelName(savedModel))
+            setNoLLM(false)
+            setError(null)
+            if (dirHandleRef.current && files.some(f => f.status === 'error')) {
+              void handleRefresh()
+            }
+          }}
+        />
+      )}
       <div className="fb-bg" aria-hidden="true">
         <div className="fb-bg__blob fb-bg__blob--a" />
         <div className="fb-bg__blob fb-bg__blob--b" />
@@ -813,7 +1080,7 @@ export default function SidePanel() {
           <button
             id="fb-settings-btn"
             style={styles.iconBtn}
-            onClick={openSettings}
+            onClick={() => setSettingsOpen(true)}
             title="AI Settings"
             aria-label="AI Settings"
           >
@@ -904,7 +1171,7 @@ export default function SidePanel() {
       {noLLM && (
         <div style={styles.warningBox}>
           <span>⚠️ No API key set — extraction may not be clean.</span>
-          <button style={styles.inlineBtn} onClick={openSettings}>Configure →</button>
+          <button style={styles.inlineBtn} onClick={() => setSettingsOpen(true)}>Configure →</button>
         </div>
       )}
       {error && !hasFolder && (

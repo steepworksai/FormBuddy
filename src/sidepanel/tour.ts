@@ -22,70 +22,18 @@ export function startTour(hasFolder: boolean): void {
       popover: {
         title: '👋 Welcome to FormBuddy',
         description: `
-          <p>Your <strong>AI-powered form assistant</strong> that finds form-ready values directly from your personal documents.</p>
-          <p style="margin-top:8px;color:#7c3aed;font-weight:600;font-size:12px;">Let's take a quick tour ✨</p>
-        `,
-      },
-    },
-    {
-      popover: {
-        title: '🔒 Your Privacy, Guaranteed',
-        description: `
-          <div class="fb-privacy-grid">
-            <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">📄</span>
-              <span><strong>Documents stay local</strong><br/>Your files never leave your device</span>
-            </div>
-            <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">🚫</span>
-              <span><strong>Zero uploads</strong><br/>No cloud storage, no syncing</span>
-            </div>
-            <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">🔑</span>
-              <span><strong>Keys sandboxed</strong><br/>API keys locked in your browser only</span>
-            </div>
-            <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">🏠</span>
-              <span><strong>No backend</strong><br/>FormBuddy runs entirely client-side</span>
-            </div>
-          </div>
-          
-        `,
-      },
-    },
-    {
-      popover: {
-        title: '🤖 Works With Your Favourite AI',
-        description: `
-          <div class="fb-privacy-grid">
-            <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">✨</span>
-              <span><strong>Google Gemini</strong><br/><span style="color:#059669;font-weight:700;">FREE — no credit card needed</span></span>
-            </div>
-            <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">🧠</span>
-              <span><strong>Anthropic Claude</strong><br/>Best for complex documents</span>
-            </div>
-            <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">⚡</span>
-              <span><strong>OpenAI GPT-4o</strong><br/>Fast and reliable</span>
-            </div>
-            <div class="fb-privacy-item">
-              <span class="fb-privacy-icon">🔑</span>
-              <span><strong>Bring your own key</strong><br/>No FormBuddy subscription ever</span>
-            </div>
-          </div>
+          <p>Your <strong>AI-powered form assistant</strong> — paste a key, pick a folder, and it fills any web form from your documents.</p>
+          <p style="margin-top:8px;font-size:12px;color:#6b7280;">🔒 Everything stays on your device. No uploads, no backend.</p>
         `,
       },
     },
     {
       element: '#fb-settings-btn',
       popover: {
-        title: '🚀 Start Free in 2 Minutes',
+        title: '🤖 Connect an AI Provider',
         description: `
-          <p>Open <strong>AI Settings</strong> and connect Google Gemini — it's completely free, no credit card required.</p>
-          <p style="margin-top:8px;">Get your free key at <strong>aistudio.google.com</strong> and paste it in. That's it.</p>
-          <p style="margin-top:8px;font-size:11px;color:#6b7280;">Prefer Claude or GPT-4o? Those work too — just paste your key.</p>
+          <p>Click here to add your API key. <strong>Google Gemini is free</strong> — no credit card needed.</p>
+          <p style="margin-top:8px;font-size:11px;color:#6b7280;">Claude and GPT-4o are also supported.</p>
         `,
         side: 'bottom' as const,
         align: 'end' as const,
@@ -96,8 +44,7 @@ export function startTour(hasFolder: boolean): void {
       popover: {
         title: '📂 Connect Your Documents',
         description: `
-          <p>Click here to pick a folder containing your <strong>PDFs, screenshots, or notes</strong>.</p>
-          <p>FormBuddy indexes them locally — no uploads, ever.</p>
+          <p>Pick a folder of <strong>PDFs, images, or notes</strong>. FormBuddy indexes them locally — nothing leaves your device.</p>
         `,
         side: 'bottom' as const,
         align: 'center' as const,
@@ -110,22 +57,11 @@ export function startTour(hasFolder: boolean): void {
       {
         element: '#fb-file-list',
         popover: {
-          title: '📋 Your Indexed Documents',
+          title: '📋 Your Documents',
           description: `
-              <p>All your documents appear here with their indexing status.</p>
-              <p>Check a file's checkbox to <strong>filter</strong> which documents FormBuddy searches.</p>
+              <p>Indexed files appear here. <strong>Check specific files</strong> to limit which ones FormBuddy searches.</p>
             `,
           side: 'bottom' as const,
-        },
-      },
-      {
-        element: '#fb-fill-section',
-        popover: {
-          title: '✨ Fill From My Docs',
-          description: `
-              <p>This is your <strong>main workspace</strong>. FormBuddy can scan fields on this page and match values from your documents.</p>
-            `,
-          side: 'top' as const,
         },
       },
       {
@@ -133,8 +69,7 @@ export function startTour(hasFolder: boolean): void {
         popover: {
           title: '⚡ Scan &amp; Auto Fill',
           description: `
-              <p>One click does everything — <strong>scans the form</strong>, finds matching values from your documents, and <strong>fills it all automatically</strong>.</p>
-              <p>Results appear in the table below with their source file.</p>
+              <p>One click — <strong>detects all fields</strong> on this page, matches values from your documents, and fills everything automatically.</p>
             `,
           side: 'top' as const,
           align: 'center' as const,
@@ -159,7 +94,7 @@ export function startTour(hasFolder: boolean): void {
   ]
 
   const driverObj = driver({
-    showProgress: true,
+    showProgress: false,
     animate: true,
     smoothScroll: true,
     allowClose: true,
@@ -171,6 +106,41 @@ export function startTour(hasFolder: boolean): void {
     prevBtnText: '&larr; Back',
     doneBtnText: hasFolder ? 'Let\'s go! 🚀' : 'Got it! 🎉',
     steps: [...baseSteps, ...folderSteps, ...finalStep],
+    onPopoverRender: (popover) => {
+      if (driverObj.isLastStep()) return
+      const skipBtn = document.createElement('button')
+      skipBtn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"
+          fill="none" stroke="#fff" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round"
+          style="display:inline-block;vertical-align:middle;margin-right:5px;margin-bottom:1px;flex-shrink:0">
+          <polygon points="13 19 22 12 13 5 13 19"/>
+          <polygon points="2 19 11 12 2 5 2 19"/>
+        </svg>Skip`
+      skipBtn.className = 'fb-tour-skip-btn'
+      Object.assign(skipBtn.style, {
+        background: 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)',
+        color: '#ffffff',
+        border: 'none',
+        borderRadius: '10px',
+        padding: '8px 16px',
+        fontSize: '13px',
+        fontWeight: '700',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        letterSpacing: '0.2px',
+        whiteSpace: 'nowrap',
+        boxShadow: '0 4px 14px rgba(100,116,139,0.4)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        textDecoration: 'none',
+      })
+      skipBtn.addEventListener('click', () => {
+        void markTourDone()
+        driverObj.destroy()
+      })
+      popover.footer.insertBefore(skipBtn, popover.footerButtons)
+    },
     onDestroyStarted: () => {
       void markTourDone()
       driverObj.destroy()

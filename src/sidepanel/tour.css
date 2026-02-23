@@ -250,6 +250,30 @@
   border: 1px dashed #d1d5db;
 }
 
+/* ─── Skip tour button ───────────────────────────────────────────────────── */
+
+.fb-tour-skip-btn {
+  background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+  color: #ffffff !important;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(100, 116, 139, 0.4);
+  transition: transform 0.15s, box-shadow 0.15s;
+  text-decoration: none !important;
+}
+
+.fb-tour-skip-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(100, 116, 139, 0.5);
+}
+
 /* ─── Glowing spotlight ring ─────────────────────────────────────────────── */
 
 /* Glowing spotlight ring */

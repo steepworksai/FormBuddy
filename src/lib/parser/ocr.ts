@@ -14,7 +14,7 @@ function normalizeOcrText(raw: string): string {
 }
 
 function canUseVision(config?: LLMConfig): config is LLMConfig {
-  return !!config?.apiKey && config.provider === 'anthropic'
+  return !!config?.apiKey
 }
 
 function toErrorMessage(err: unknown): string {
@@ -33,7 +33,7 @@ export async function extractTextFromImage(
 ): Promise<{ pages: PageEntry[]; pageCount: number }> {
   if (!canUseVision(llmConfig)) {
     throw new Error(
-      `An Anthropic API key is required to process image files. ` +
+      `An API key is required to process image files. ` +
       `Open settings and add your key to index "${file.name}".`
     )
   }
@@ -62,7 +62,7 @@ export async function ocrCanvases(
 ): Promise<Map<number, string>> {
   if (!canUseVision(llmConfig)) {
     throw new Error(
-      'An Anthropic API key is required to process scanned PDF pages. ' +
+      'An API key is required to process scanned PDF pages. ' +
       'Open settings and add your key.'
     )
   }
