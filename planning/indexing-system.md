@@ -235,7 +235,7 @@ not on every extension start or form visit.
 import { v4 as uuidv4 } from 'uuid';
 import { extractTextFromPDF } from '../parser/pdf';
 import { extractTextFromImage } from '../parser/ocr';
-import { extractEntitiesWithLLM } from '../llm/extractor';
+import { cleanTextWithLLM } from '../llm/extractor';
 import { computeChecksum } from './checksum';
 import { readManifest, writeManifest } from './manifest';
 import { DocumentIndex, ManifestEntry } from '../../types/indexing';
@@ -269,8 +269,8 @@ export async function indexDocument(
     rawText = await file.text();
   }
 
-  // LLM extracts structured fields and entities
-  const { pages, entities, summary } = await extractEntitiesWithLLM(rawText, file.name);
+  // LLM cleans and de-noises raw text (Phase 2 — Cleanup)
+  const cleanText = await cleanTextWithLLM(rawText, file.name);
 
   const id = existing?.id ?? uuidv4();
   const indexEntry: DocumentIndex = {

@@ -241,10 +241,10 @@ sequenceDiagram
         alt "Changed or new file"
             BG->>BG: Parse PDF or OCR/image extraction
             alt "API key present"
-                BG->>LLM: Search-index + extraction prompts
-                LLM-->>BG: Structured fields/autofill/entities
+                BG->>LLM: Cleanup prompt (de-noise raw text)
+                LLM-->>BG: cleanText
             end
-            BG->>IDX: Write document index + search index + manifest
+            BG->>IDX: Write document index (cleanText) + manifest
         else "Unchanged"
             BG-->>SP: Skip indexing
         end
@@ -260,7 +260,7 @@ sequenceDiagram
     SP->>BG: MANUAL_FIELD_FETCH {fields[]}
 
     alt "API key present"
-        BG->>BG: Build docs payload (search index + parsed fallback)
+        BG->>BG: Build docs payload (cleanText from indexed docs)
         BG->>LLM: One bulk mapping call for requested fields
         LLM-->>BG: Field-value mappings + confidence
     else "No API key"

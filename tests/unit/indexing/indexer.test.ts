@@ -24,10 +24,7 @@ vi.mock('../../../src/lib/parser/ocr', () => ({
 }))
 
 vi.mock('../../../src/lib/llm/extractor', () => ({
-  extractEntitiesWithLLM: vi.fn(async () => ({
-    entities: { identifiers: ['ABC-123'] },
-    summary: 'mock summary',
-  })),
+  cleanTextWithLLM: vi.fn(async (_raw: string) => 'cleaned text'),
 }))
 
 describe('TM2 indexer', () => {
@@ -72,7 +69,7 @@ describe('TM2 indexer', () => {
 
     // Simulate uuid.json being lost (folder moved, extension reloaded, etc.)
     const uuidJsonKey = [...store.keys()].find(
-      k => /\/[0-9a-f-]{36}\.json$/.test(k) && !k.includes('search.index')
+      k => /\/[0-9a-f-]{36}\.json$/.test(k)
     )
     expect(uuidJsonKey).toBeDefined()
     store.delete(uuidJsonKey!)

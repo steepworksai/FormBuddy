@@ -5,9 +5,8 @@
  * Simulates the complete FormBuddy indexing + field-mapping pipeline:
  *
  *   Phase 1 — Parse   : extract raw text from a PDF or image via LLM vision
- *   Phase 2 — Extract : entity extraction (names, dates, IDs, addresses, …)
- *   Phase 3 — Index   : build search index (autofill keys + labelled items)
- *   Phase 4 — Map     : map a list of form fields to extracted values
+ *   Phase 2 — Cleanup : de-noise and normalise raw text via LLM
+ *   Phase 3 — Map     : map a list of form fields to extracted values
  *
  * Edit the CONFIG block below, then run:
  *   node scripts/test-e2e.mjs

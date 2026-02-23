@@ -29,8 +29,7 @@ function makeDocumentIndex(override: Partial<DocumentIndex> = {}): DocumentIndex
     language: 'en',
     pageCount: 1,
     pages: [{ page: 1, rawText: 'Passport Number: P1234567', fields: [] }],
-    entities: {},
-    summary: '',
+    cleanText: 'Passport Number: P1234567',
     usedFields: [],
     ...override,
   }

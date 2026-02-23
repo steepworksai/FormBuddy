@@ -109,13 +109,9 @@ into the `<uuid>.json`.
       `openai` SDK
 - [ ] `src/lib/llm/index.ts` — `callLLM(prompt, config)` dispatcher that
       routes to the right provider
-- [ ] `src/lib/llm/extractor.ts` — `extractEntitiesWithLLM(rawText, fileName,
-      config)` that returns `{ pages, entities, summary }`
-- [ ] `entities` object populated with keys: `numbers`, `dates`, `names`,
-      `addresses`, `employers`, `currencies`, `identifiers`
-- [ ] `summary` is a 1–2 sentence plain-English description of the document
-- [ ] `<uuid>.json` on disk contains the populated `entities` and `summary`
-      after indexing
+- [ ] `src/lib/llm/extractor.ts` — `cleanTextWithLLM(rawText, fileName, config)`
+      that returns a de-noised `cleanText` string
+- [ ] `<uuid>.json` on disk contains `cleanText` after indexing
 - [ ] LLM call is skipped and a warning logged if `llmConfig` is missing from
       `chrome.storage.local`
 - [ ] API key stored and retrieved from `chrome.storage.local` (not hardcoded)
@@ -407,7 +403,7 @@ handled gracefully. The store listing assets are prepared.
 | 1 | Extension skeleton | See the side panel open in Chrome |
 | 2 | Folder picker + file list | Pick a folder, see files listed |
 | 3 | Local indexing + `.indexing` | See `rawText` in uuid.json |
-| 4 | LLM entity extraction | See `entities` + `summary` in uuid.json |
+| 4 | LLM text cleanup | See `cleanText` populated in uuid.json |
 | 5 | BYOK settings | Save a key, see green "Connected" badge |
 | 6 | Field detection | See field labels appear in side panel |
 | 7 | Suggestion card | See a suggestion appear when a field is focused |

@@ -63,7 +63,7 @@ export async function indexDocument(
   // ── Phase 1: Parse ────────────────────────────────────────
   // PDFs: text extracted via pdfjs-dist (+ LLM OCR for scanned pages)
   // Images: text extracted via LLM vision
-  // Both produce pages[].rawText before Phase 2.
+  // Both produce pages[].rawText before Phase 2 (Cleanup).
   onPhase?.('parsing')
 
   const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
