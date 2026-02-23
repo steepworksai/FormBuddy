@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { callGemini } from '../../../src/lib/llm/gemini'
 
-const config = { provider: 'gemini' as const, apiKey: 'test-key', model: 'gemini-2.0-flash' }
+const config = { provider: 'gemini' as const, apiKey: 'test-key', model: 'gemini-2.5-flash' }
 
 function makeFetchResponse(body: unknown, ok = true, status = 200) {
   return {
@@ -45,14 +45,14 @@ describe('callGemini', () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       makeFetchResponse('Bad Request', false, 400)
     )
-    await expect(callGemini('sys', 'user msg', config)).rejects.toThrow('Gemini API error (400)')
+    await expect(callGemini('sys', 'user msg', config)).rejects.toThrow('[Gemini gemini-2.5-flash] HTTP 400')
   })
 
   it('throws when candidates array is empty', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       makeFetchResponse({ candidates: [] })
     )
-    await expect(callGemini('sys', 'user msg', config)).rejects.toThrow('Empty response from Gemini')
+    await expect(callGemini('sys', 'user msg', config)).rejects.toThrow('[Gemini gemini-2.5-flash] Empty response')
   })
 
   it('throws when text assembled from parts is empty', async () => {
@@ -61,12 +61,12 @@ describe('callGemini', () => {
         candidates: [{ content: { parts: [{ text: '   ' }] } }],
       })
     )
-    await expect(callGemini('sys', 'user msg', config)).rejects.toThrow('Empty response from Gemini')
+    await expect(callGemini('sys', 'user msg', config)).rejects.toThrow('[Gemini gemini-2.5-flash] Empty response')
   })
 
   it('throws when candidates key is missing entirely', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(makeFetchResponse({}))
-    await expect(callGemini('sys', 'user msg', config)).rejects.toThrow('Empty response from Gemini')
+    await expect(callGemini('sys', 'user msg', config)).rejects.toThrow('[Gemini gemini-2.5-flash] Empty response')
   })
 
   it('sends model and apiKey in the request URL', async () => {
@@ -77,7 +77,7 @@ describe('callGemini', () => {
     )
     await callGemini('sys', 'user msg', config)
     const [url] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit]
-    expect(url).toContain('gemini-2.0-flash')
+    expect(url).toContain('gemini-2.5-flash')
     expect(url).toContain('test-key')
   })
 

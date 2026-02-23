@@ -66,7 +66,7 @@ describe('TM3 verifyApiKey', () => {
     const result = await verifyApiKey({
       provider: 'gemini',
       apiKey: 'valid',
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
     })
     expect(result).toBe(true)
   })
@@ -87,7 +87,7 @@ describe('TM3 verifyApiKey', () => {
     const result = await verifyApiKey({
       provider: 'gemini',
       apiKey: 'bad-key',
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
     })
     expect(result).toBe(false)
   })
@@ -108,7 +108,7 @@ describe('TM3 verifyApiKey', () => {
     const result = await verifyApiKey({
       provider: 'gemini',
       apiKey: 'restricted-key',
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
     })
     expect(result).toBe(false)
   })
@@ -121,7 +121,7 @@ describe('TM3 verifyApiKey', () => {
 
     const { verifyApiKey } = await import('../../../src/lib/llm/verify')
     await expect(
-      verifyApiKey({ provider: 'gemini', apiKey: 'any', model: 'gemini-2.0-flash' })
+      verifyApiKey({ provider: 'gemini', apiKey: 'any', model: 'gemini-2.5-flash' })
     ).rejects.toThrow('Failed to fetch')
   })
 })

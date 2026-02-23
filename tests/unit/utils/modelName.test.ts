@@ -40,16 +40,16 @@ describe('shortModelName', () => {
 
   // ── Gemini ────────────────────────────────────────────────────────────────
 
-  it('formats gemini-2.0-flash', () => {
-    expect(shortModelName('gemini-2.0-flash')).toBe('Gemini 2.0 flash')
+  it('formats gemini-2.5-flash', () => {
+    expect(shortModelName('gemini-2.5-flash')).toBe('Gemini 2.5 flash')
   })
 
-  it('formats gemini-2.0-flash-lite', () => {
-    expect(shortModelName('gemini-2.0-flash-lite')).toBe('Gemini 2.0 flash lite')
+  it('formats gemini-2.5-flash-lite', () => {
+    expect(shortModelName('gemini-2.5-flash-lite')).toBe('Gemini 2.5 flash lite')
   })
 
-  it('formats gemini-1.5-pro', () => {
-    expect(shortModelName('gemini-1.5-pro')).toBe('Gemini 1.5 pro')
+  it('formats gemini-2.5-pro', () => {
+    expect(shortModelName('gemini-2.5-pro')).toBe('Gemini 2.5 pro')
   })
 
   // ── Unknown ───────────────────────────────────────────────────────────────

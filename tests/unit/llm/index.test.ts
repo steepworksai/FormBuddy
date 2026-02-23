@@ -42,7 +42,7 @@ describe('TM3 callLLM provider dispatch', () => {
     const result = await callLLM('s', 'u', {
       provider: 'gemini',
       apiKey: 'x',
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
     })
     expect(result).toBe('gemini-result')
     expect(callGeminiMock).toHaveBeenCalledTimes(1)

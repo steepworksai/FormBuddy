@@ -62,7 +62,7 @@ const fieldsRaw = arg('--fields')
 const DEFAULT_MODELS = {
   anthropic: 'claude-sonnet-4-6',
   openai:    'gpt-4o',
-  gemini:    'gemini-2.0-flash',
+  gemini:    'gemini-2.5-flash',
 }
 const model = modelArg ?? DEFAULT_MODELS[provider] ?? 'claude-sonnet-4-6'
 

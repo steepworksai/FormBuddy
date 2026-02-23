@@ -6,7 +6,7 @@
  *   "claude-haiku-4-5-20251001"  → "Haiku 4.5"
  *   "gpt-4o"                     → "GPT-4o"
  *   "gpt-4o-mini"                → "GPT-4o mini"
- *   "gemini-2.0-flash"           → "Gemini 2.0 flash"
+ *   "gemini-2.5-flash"           → "Gemini 2.5 flash"
  */
 export function shortModelName(model: string | undefined): string {
   if (!model) return ''
@@ -28,7 +28,7 @@ export function shortModelName(model: string | undefined): string {
   }
 
   if (/gemini/i.test(model)) {
-    // gemini-2.0-flash → Gemini 2.0 flash
+    // gemini-2.5-flash → Gemini 2.5 flash
     const m = model.replace(/^gemini-/i, '').replace(/-/g, ' ')
     return 'Gemini ' + m
   }
