@@ -44,13 +44,7 @@ beforeEach(() => {
 describe('extractTextFromImage', () => {
   it('throws when no llmConfig is provided', async () => {
     await expect(extractTextFromImage(makeFile())).rejects.toThrow(
-      'An Anthropic API key is required'
-    )
-  })
-
-  it('throws when provider is not anthropic', async () => {
-    await expect(extractTextFromImage(makeFile(), undefined, openaiConfig)).rejects.toThrow(
-      'An Anthropic API key is required'
+      'An API key is required'
     )
   })
 
@@ -59,7 +53,7 @@ describe('extractTextFromImage', () => {
       provider: 'anthropic',
       apiKey: '',
       model: 'claude-sonnet-4-6',
-    })).rejects.toThrow('An Anthropic API key is required')
+    })).rejects.toThrow('An API key is required')
   })
 
   it('includes file name in error message', async () => {
@@ -114,14 +108,8 @@ describe('extractTextFromImage', () => {
 describe('ocrCanvases', () => {
   it('throws when no llmConfig provided', async () => {
     await expect(ocrCanvases([{ pageNum: 1, canvas: makeCanvas() }])).rejects.toThrow(
-      'An Anthropic API key is required'
+      'An API key is required'
     )
-  })
-
-  it('throws when provider is not anthropic', async () => {
-    await expect(
-      ocrCanvases([{ pageNum: 1, canvas: makeCanvas() }], undefined, openaiConfig)
-    ).rejects.toThrow('An Anthropic API key is required')
   })
 
   it('returns empty Map for empty canvases array', async () => {

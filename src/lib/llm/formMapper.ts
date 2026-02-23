@@ -9,9 +9,7 @@ export interface FormFieldInput {
 
 export interface FormMapDocumentInput {
   fileName: string
-  autofill: Record<string, string>
-  items: Array<{ fieldLabel: string; value: string; aliases: string[] }>
-  referenceJson?: unknown
+  cleanText: string
 }
 
 function normalize(value: string): string {
@@ -26,7 +24,8 @@ interface FormMapperOptions {
   rawFieldsInput?: string
 }
 
-function parseKeyValueMappings(
+
+function parseMappings(
   cleaned: string,
   fields: FormFieldInput[],
   documents: FormMapDocumentInput[]
@@ -68,7 +67,8 @@ function parseKeyValueMappings(
       fieldLabel,
       value: rawValue,
       sourceFile: firstSource,
-      reason: 'Mapped from manual field extraction prompt',
+      sourceText: '',
+      reason: 'Mapped from document text',
       confidence: 'medium',
     })
   }
@@ -83,18 +83,20 @@ export async function buildFormAutofillMapWithLLM(
   options?: FormMapperOptions
 ): Promise<FormKVMapping[]> {
   if (!fields.length || !documents.length) return []
+
   const payload = {
-    reference_json: documents.map(doc => ({
+    documents: documents.map(doc => ({
       fileName: doc.fileName,
-      document: doc.referenceJson ?? doc,
+      cleanText: doc.cleanText,
     })),
-    form_fields: options?.rawFieldsInput?.trim() || fields.map(field => field.fieldLabel).join('\n'),
+    form_fields: options?.rawFieldsInput?.trim() || fields.map(f => f.fieldLabel).join('\n'),
   }
+
   const systemPrompt = getManualFieldExtractionPrompt()
   const userMessage = JSON.stringify(payload, null, 2)
 
   const raw = await callLLM(systemPrompt, userMessage, config)
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
 
-  return parseKeyValueMappings(cleaned, fields, documents)
+  return parseMappings(cleaned, fields, documents)
 }

@@ -1,5 +1,4 @@
 import type { DocumentIndex, FormKVMapping, LLMConfig, Suggestion } from '../types'
-import { queryIndex } from '../lib/indexing/query'
 import { generateSuggestionWithLLM } from '../lib/llm/suggestion'
 import { buildFormAutofillMapWithLLM } from '../lib/llm/formMapper'
 
@@ -152,196 +151,6 @@ function resetSession(): void {
   rejectedFieldIds.clear()
 }
 
-function tokenize(input: string): string[] {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-}
-
-function overlapScore(a: string, bTokens: string[]): number {
-  const lower = a.toLowerCase()
-  return bTokens.reduce((acc, token) => acc + (lower.includes(token) ? 1 : 0), 0)
-}
-
-
-function bestFieldFromDocs(label: string): {
-  value: string
-  sourceFile: string
-  sourcePage?: number
-  sourceText: string
-  confidence: 'high' | 'medium' | 'low'
-} | null {
-  const tokens = tokenize(label)
-  let best: {
-    value: string
-    sourceFile: string
-    sourcePage?: number
-    sourceText: string
-    score: number
-  } | null = null
-
-  for (const doc of indexedDocuments) {
-    for (const [key, value] of Object.entries(doc.searchIndex?.autofill ?? {})) {
-      const score = overlapScore(key, tokens) * 4 + overlapScore(value, tokens)
-      if (score <= 0) continue
-      if (!best || score > best.score) {
-        best = { value, sourceFile: doc.fileName, sourcePage: 1, sourceText: key, score }
-      }
-    }
-    for (const page of doc.pages) {
-      for (const field of page.fields) {
-        const score = overlapScore(field.label, tokens) * 4 + overlapScore(field.value, tokens)
-        if (score <= 0) continue
-        if (!best || score > best.score) {
-          best = {
-            value: field.value,
-            sourceFile: doc.fileName,
-            sourcePage: page.page,
-            sourceText: field.boundingContext || field.value,
-            score,
-          }
-        }
-      }
-    }
-  }
-
-  if (!best) return null
-  return {
-    value: best.value,
-    sourceFile: best.sourceFile,
-    sourcePage: best.sourcePage,
-    sourceText: best.sourceText,
-    confidence: 'medium',
-  }
-}
-
-function regexFallbackFromDocs(label: string): {
-  value: string
-  sourceFile: string
-  sourcePage?: number
-  sourceText: string
-} | null {
-  const lower = label.toLowerCase()
-  const patterns: Array<{ when: (v: string) => boolean; regexes: RegExp[] }> = [
-    {
-      when: v => v.includes('issue') && v.includes('date'),
-      regexes: [
-        /(?:issue(?:d)?\s*date|iss)\s*[:\-]?\s*([0-9]{4}[\/\-][0-9]{2}[\/\-][0-9]{2}|[0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/i,
-      ],
-    },
-    {
-      when: v => v.includes('height') || v.includes('hgt'),
-      regexes: [
-        /(?:height|hgt)\s*[:\-]?\s*([0-9]'\s?[0-9]{1,2}"?|[0-9]{2,3}\s?(?:cm|in))/i,
-      ],
-    },
-    {
-      when: v => v.includes('weight') || v.includes('wgt'),
-      regexes: [
-        /(?:weight|wgt)\s*[:\-]?\s*([0-9]{2,3}\s?(?:lb|lbs|kg)?)/i,
-      ],
-    },
-    {
-      when: v => v.includes('eye') && v.includes('color'),
-      regexes: [
-        /(?:eye\s*color|eyes?)\s*[:\-]?\s*([A-Z]{3,5}|brown|blue|green|hazel|gray|grey|black)/i,
-      ],
-    },
-  ]
-
-  const matcher = patterns.find(p => p.when(lower))
-  if (!matcher) return null
-
-  for (const doc of indexedDocuments) {
-    for (const page of doc.pages) {
-      const text = page.rawText
-      for (const rx of matcher.regexes) {
-        const hit = rx.exec(text)
-        if (hit?.[1]) {
-          return {
-            value: hit[1].trim(),
-            sourceFile: doc.fileName,
-            sourcePage: page.page,
-            sourceText: hit[0].trim(),
-          }
-        }
-      }
-    }
-  }
-  return null
-}
-
-function findLocalFieldSuggestion(fieldId: string, fieldLabel: string): Omit<Suggestion, 'id' | 'sessionId'> | null {
-  const tokens = tokenize(fieldLabel)
-  let best: {
-    value: string
-    sourceFile: string
-    sourcePage?: number
-    sourceText: string
-    score: number
-  } | null = null
-
-  for (const doc of indexedDocuments) {
-    for (const [key, value] of Object.entries(doc.searchIndex?.autofill ?? {})) {
-      const score = overlapScore(key, tokens) * 4 + overlapScore(value, tokens) * 2
-      if (score <= 0) continue
-      if (!best || score > best.score) {
-        best = {
-          value,
-          sourceFile: doc.fileName,
-          sourcePage: 1,
-          sourceText: key,
-          score,
-        }
-      }
-    }
-
-    for (const item of doc.searchIndex?.items ?? []) {
-      const aliasScore = (item.aliases ?? []).reduce((acc, alias) => acc + overlapScore(alias, tokens), 0)
-      const score = overlapScore(item.fieldLabel, tokens) * 4 + overlapScore(item.value, tokens) * 2 + aliasScore
-      if (score <= 0) continue
-      if (!best || score > best.score) {
-        best = {
-          value: item.value,
-          sourceFile: doc.fileName,
-          sourcePage: 1,
-          sourceText: item.sourceText || item.value,
-          score,
-        }
-      }
-    }
-
-    for (const page of doc.pages) {
-      for (const field of page.fields) {
-        const score = overlapScore(field.label, tokens) * 3 + overlapScore(field.value, tokens)
-        if (score <= 0) continue
-        if (!best || score > best.score) {
-          best = {
-            value: field.value,
-            sourceFile: doc.fileName,
-            sourcePage: page.page,
-            sourceText: field.boundingContext || field.value,
-            score,
-          }
-        }
-      }
-    }
-  }
-
-  if (!best) return null
-  return {
-    fieldId,
-    fieldLabel,
-    value: best.value,
-    sourceFile: best.sourceFile,
-    sourcePage: best.sourcePage,
-    sourceText: best.sourceText,
-    reason: 'Matched from indexed field data',
-    confidence: 'medium',
-  }
-}
 
 async function loadLLMConfig(): Promise<LLMConfig | null> {
   const result = await chrome.storage.local.get('llmConfig')
@@ -375,11 +184,16 @@ async function requestFormKVCache(signature: string): Promise<FormKVMapping[] | 
   }
 }
 
-async function storeFormKVCache(signature: string, mappings: FormKVMapping[]): Promise<void> {
+async function storeFormKVCache(
+  signature: string,
+  mappings: FormKVMapping[],
+  documents: Array<{ fileName: string; cleanText: string }> = [],
+  requestedFields: string[] = []
+): Promise<void> {
   try {
     await chrome.runtime.sendMessage({
       type: 'FORM_KV_CACHE_SET',
-      payload: { signature, mappings },
+      payload: { signature, mappings, documents, requestedFields },
     })
   } catch {
     // Sidepanel may be closed; skip cache persistence.
@@ -399,7 +213,7 @@ function mappingToManualResult(mapping: FormKVMapping): {
     value: mapping.value,
     sourceFile: mapping.sourceFile || 'Selected docs',
     sourcePage: 1,
-    sourceText: mapping.reason || mapping.value,
+    sourceText: mapping.sourceText || mapping.reason || mapping.value,
     confidence: mapping.confidence ?? 'medium',
   }
 }
@@ -416,6 +230,7 @@ function manualResultToMapping(item: {
     fieldLabel: item.fieldLabel,
     value: item.value,
     sourceFile: item.sourceFile,
+    sourceText: item.sourceText,
     reason: item.sourceText || item.value,
     confidence: item.confidence,
   }
@@ -437,87 +252,33 @@ async function handleFieldFocused(payload: FieldFocusedPayload, sender: chrome.r
   const override = getSuggestionOverride()
   if (override !== undefined) {
     if (!override?.value) return
-    chrome.runtime.sendMessage({
-      type: 'NEW_SUGGESTION',
-      payload: {
-        id: crypto.randomUUID(),
-        sessionId,
-        ...override,
-      },
-    })
+    chrome.runtime.sendMessage({ type: 'NEW_SUGGESTION', payload: { id: crypto.randomUUID(), sessionId, ...override } })
     return
   }
 
   if (!indexedDocuments.length) return
 
   const llmConfig = await loadLLMConfig()
+  if (!llmConfig?.apiKey) return
 
-  const candidates = queryIndex(payload.fieldLabel, indexedDocuments, 5)
-  if (!candidates.length) return
+  const docs = indexedDocuments.map(d => ({
+    fileName: d.fileName,
+    cleanText: d.cleanText ?? d.rawText ?? d.pages.map(p => p.rawText).join('\n'),
+  })).filter(d => d.cleanText.trim().length > 0)
 
-  if (!llmConfig?.apiKey) {
-    const local = findLocalFieldSuggestion(payload.fieldId, payload.fieldLabel)
-    if (!local?.value) return
+  if (!docs.length) return
+
+  try {
+    const suggested = await generateSuggestionWithLLM(payload.fieldId, payload.fieldLabel, docs, llmConfig)
+    if (!suggested?.value) return
     chrome.runtime.sendMessage({
       type: 'NEW_SUGGESTION',
-      payload: {
-        id: crypto.randomUUID(),
-        sessionId,
-        ...local,
-      },
+      payload: { id: crypto.randomUUID(), sessionId, ...suggested },
     })
-    return
-  }
-
-  let suggested: Awaited<ReturnType<typeof generateSuggestionWithLLM>> = null
-  try {
-    suggested = await generateSuggestionWithLLM(
-      payload.fieldId,
-      payload.fieldLabel,
-      candidates,
-      llmConfig
-    )
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown LLM error'
-    const local = findLocalFieldSuggestion(payload.fieldId, payload.fieldLabel)
-    if (local?.value) {
-      chrome.runtime.sendMessage({
-        type: 'NEW_SUGGESTION',
-        payload: {
-          id: crypto.randomUUID(),
-          sessionId,
-          ...local,
-        },
-      })
-      return
-    }
     chrome.runtime.sendMessage({ type: 'APP_ERROR', payload: { message: `LLM error: ${message}` } })
-    return
   }
-  if (!suggested?.value) {
-    const local = findLocalFieldSuggestion(payload.fieldId, payload.fieldLabel)
-    if (!local?.value) return
-    chrome.runtime.sendMessage({
-      type: 'NEW_SUGGESTION',
-      payload: {
-        id: crypto.randomUUID(),
-        sessionId,
-        ...local,
-      },
-    })
-    return
-  }
-
-  const suggestion: Suggestion = {
-    id: crypto.randomUUID(),
-    sessionId,
-    ...suggested,
-  }
-
-  chrome.runtime.sendMessage({
-    type: 'NEW_SUGGESTION',
-    payload: suggestion,
-  })
 }
 
 async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise<{
@@ -535,12 +296,10 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
   const labels = (payload.fields ?? []).map(v => v.trim()).filter(Boolean).slice(0, 25)
 
   if (!labels.length) return { results: [], reason: 'No fields were provided.' }
-  if (!indexedDocuments.length) {
-    console.warn('[FormBuddy][BG] No indexed documents in memory — was CONTEXT_UPDATED received?')
-    return { results: [], reason: 'No indexed documents are selected.' }
-  }
-  const signature = manualFetchSignature(labels, payload.rawInput)
+  if (!indexedDocuments.length) return { results: [], reason: 'No indexed documents are selected.' }
+  if (!llmConfig?.apiKey) return { results: [], reason: 'No API key configured. Open settings to add your key.' }
 
+  const signature = manualFetchSignature(labels, payload.rawInput)
   const cached = await requestFormKVCache(signature)
   if (cached) {
     const cachedResults = cached.map(mappingToManualResult)
@@ -548,157 +307,47 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
     return { results: [], reason: 'No matching values found for the requested fields.' }
   }
 
-  const results: Array<{
-  fieldLabel: string
-  value: string
-  sourceFile: string
-  sourcePage?: number
-  sourceText: string
-  confidence: 'high' | 'medium' | 'low'
-  }> = []
-  const seenLabels = new Set<string>()
-  let hadSearchPayload = false
+  const docsPayload = indexedDocuments
+    .map(doc => ({
+      fileName: doc.fileName,
+      cleanText: doc.cleanText ?? doc.rawText ?? doc.pages.map(p => p.rawText).join('\n').trim(),
+    }))
+    .filter(doc => doc.cleanText.trim().length > 0)
+    .slice(0, 20)
 
-  if (llmConfig?.apiKey && indexedDocuments.length > 0) {
-    try {
-      const docsPayload = indexedDocuments
-        .map(doc => ({
-          fileName: doc.fileName,
-          autofill: doc.searchIndex?.autofill ?? {},
-          items: (doc.searchIndex?.items ?? []).slice(0, 200).map(item => ({
-            fieldLabel: item.fieldLabel,
-            value: item.value,
-            aliases: item.aliases ?? [],
-          })),
-          referenceJson: doc,
-        }))
-        .filter(doc => Object.keys(doc.autofill).length > 0 || doc.items.length > 0 || !!doc.referenceJson)
-        .slice(0, 20)
-      hadSearchPayload = docsPayload.length > 0
-
-      if (docsPayload.length > 0) {
-        const llmMappings = await buildFormAutofillMapWithLLM(
-          labels.map(label => ({
-            fieldId: normalizeKey(label).replace(/\s+/g, '_') || label,
-            fieldLabel: label,
-          })),
-          docsPayload,
-          llmConfig,
-          {
-            rawFieldsInput: payload.rawInput,
-          }
-        )
-
-        for (const mapping of llmMappings) {
-          const norm = normalizeKey(mapping.fieldLabel)
-          if (seenLabels.has(norm) || !mapping.value) continue
-          seenLabels.add(norm)
-          results.push({
-            fieldLabel: mapping.fieldLabel,
-            value: mapping.value,
-            sourceFile: mapping.sourceFile || 'Selected docs',
-            sourcePage: 1,
-            sourceText: mapping.reason || mapping.value,
-            confidence: mapping.confidence ?? 'medium',
-          })
-        }
-      }
-    } catch (err) {
-    }
-  }
-
-  for (const label of labels) {
-    if (results.length > 0) break   // bulk LLM succeeded; don't append fallback results
-    const normalizedLabel = normalizeKey(label)
-    if (seenLabels.has(normalizedLabel)) continue
-
-    const fieldId = normalizeKey(label).replace(/\s+/g, '_') || `field_${results.length + 1}`
-    const local = findLocalFieldSuggestion(fieldId, label)
-    const candidates = queryIndex(label, indexedDocuments, 5)
-
-    if (llmConfig?.apiKey && candidates.length > 0) {
-      try {
-        const suggested = await generateSuggestionWithLLM(fieldId, label, candidates, llmConfig)
-        if (suggested?.value) {
-          results.push({
-            fieldLabel: label,
-            value: suggested.value,
-            sourceFile: suggested.sourceFile || local?.sourceFile || 'Selected docs',
-            sourcePage: suggested.sourcePage ?? local?.sourcePage,
-            sourceText: suggested.sourceText || local?.sourceText || suggested.value,
-            confidence: suggested.confidence ?? 'medium',
-          })
-          seenLabels.add(normalizedLabel)
-          continue
-        }
-      } catch {
-        // Fallback to local match below.
-      }
-    }
-
-    if (local?.value) {
-      results.push({
-        fieldLabel: label,
-        value: local.value,
-        sourceFile: local.sourceFile,
-        sourcePage: local.sourcePage,
-        sourceText: local.sourceText,
-        confidence: local.confidence,
-      })
-      seenLabels.add(normalizedLabel)
-      continue
-    }
-
-    const direct = bestFieldFromDocs(label)
-    if (direct?.value) {
-      results.push({
-        fieldLabel: label,
-        value: direct.value,
-        sourceFile: direct.sourceFile,
-        sourcePage: direct.sourcePage,
-        sourceText: direct.sourceText,
-        confidence: direct.confidence,
-      })
-      seenLabels.add(normalizedLabel)
-      continue
-    }
-
-    const regex = regexFallbackFromDocs(label)
-    if (regex?.value) {
-      results.push({
-        fieldLabel: label,
-        value: regex.value,
-        sourceFile: regex.sourceFile,
-        sourcePage: regex.sourcePage,
-        sourceText: regex.sourceText,
-        confidence: 'medium',
-      })
-      seenLabels.add(normalizedLabel)
-    }
-  }
-
-  if (results.length > 0) {
-    await storeFormKVCache(signature, results.map(manualResultToMapping))
-    return { results }
-  }
-  if (!llmConfig?.apiKey) {
+  if (!docsPayload.length) {
     await storeFormKVCache(signature, [])
-    return {
-      results: [],
-      reason: 'No API key set and local index did not contain matching values.',
-    }
+    return { results: [], reason: 'Documents have no text content yet. Reindex the selected file(s).' }
   }
-  if (!hadSearchPayload) {
+
+  try {
+    const llmMappings = await buildFormAutofillMapWithLLM(
+      labels.map(label => ({
+        fieldId: normalizeKey(label).replace(/\s+/g, '_') || label,
+        fieldLabel: label,
+      })),
+      docsPayload,
+      llmConfig,
+      { rawFieldsInput: payload.rawInput }
+    )
+
+    const results = llmMappings
+      .filter(m => m.value)
+      .map(m => ({
+        fieldLabel: m.fieldLabel,
+        value: m.value,
+        sourceFile: m.sourceFile || 'Selected docs',
+        sourcePage: undefined as number | undefined,
+        sourceText: m.sourceText || m.reason || m.value,
+        confidence: m.confidence ?? ('medium' as const),
+      }))
+
+    await storeFormKVCache(signature, results.map(manualResultToMapping), docsPayload, labels)
+    if (results.length > 0) return { results }
+    return { results: [], reason: 'LLM found no values for the requested fields.' }
+  } catch (err) {
     await storeFormKVCache(signature, [])
-    return {
-      results: [],
-      reason: 'Selected docs do not have usable parsed search data yet. Reindex the selected file(s).',
-    }
-  }
-  await storeFormKVCache(signature, [])
-  return {
-    results: [],
-    reason: 'LLM and local matching found no confident value for requested fields.',
+    return { results: [], reason: `LLM error: ${err instanceof Error ? err.message : String(err)}` }
   }
 }
 

@@ -23,7 +23,6 @@ import {
   readFormKVCacheEntry,
   readIndexEntry,
   readManifest,
-  readSearchIndexEntry,
   writeFormKVCacheEntry,
   writeManifest,
 } from '../lib/indexing/manifest'
@@ -511,6 +510,8 @@ export default function SidePanel() {
           text?: string
           signature?: string
           mappings?: FormKVMapping[]
+          documents?: Array<{ fileName: string; cleanText: string }>
+          requestedFields?: string[]
           status?: 'idle' | 'running' | 'ready' | 'error'
           count?: number
           cached?: boolean
@@ -568,12 +569,16 @@ export default function SidePanel() {
         void (async () => {
           try {
             const mappings = (msg.payload?.mappings ?? []) as FormKVMapping[]
+            const documents = (msg.payload?.documents ?? []) as Array<{ fileName: string; cleanText: string }>
+            const requestedFields = (msg.payload?.requestedFields ?? []) as string[]
             const hash = await sha256Hex(msg.payload?.signature ?? '')
             const cacheFile = `${hash}.json`
             await writeFormKVCacheEntry(dirHandle, cacheFile, {
               version: '1.0',
               signature: msg.payload?.signature ?? '',
               generatedAt: new Date().toISOString(),
+              documents,
+              requestedFields,
               mappings,
             })
             sendResponse({ ok: true })
@@ -669,10 +674,6 @@ export default function SidePanel() {
       if (filter.size > 0 && !filter.has(doc.fileName)) continue
       const entry = await readIndexEntry(dirHandle, doc.indexFile)
       if (!entry) continue
-      if (doc.searchIndexFile) {
-        const searchIndex = await readSearchIndexEntry(dirHandle, doc.searchIndexFile)
-        if (searchIndex) entry.searchIndex = searchIndex
-      }
       documents.push(entry)
     }
     await chrome.runtime.sendMessage({

@@ -71,14 +71,10 @@ function createChromeMock(llmConfig?: { provider: 'anthropic' | 'openai' | 'gemi
 }
 
 async function loadBackgroundWithMocks(options?: {
-  queryCandidates?: Array<{ documentId: string; fileName: string; sourceText: string; sourcePage?: number; score: number }>
   suggestion?: Omit<Suggestion, 'id' | 'sessionId' | 'usedAt'> | null
   llmConfig?: { provider: 'anthropic' | 'openai' | 'gemini'; apiKey: string; model: string }
 }) {
   vi.resetModules()
-  const queryCandidates = options?.queryCandidates ?? [
-    { documentId: 'doc-1', fileName: 'passport.pdf', sourcePage: 1, sourceText: 'Passport AB123456', score: 5 },
-  ]
   const suggestion =
     options?.suggestion ??
     ({
@@ -92,13 +88,9 @@ async function loadBackgroundWithMocks(options?: {
       confidence: 'high',
     } satisfies Omit<Suggestion, 'id' | 'sessionId' | 'usedAt'>)
 
-  const queryIndexMock = vi.fn(() => queryCandidates)
   const generateSuggestionWithLLMMock = vi.fn(async () => suggestion)
   const buildFormAutofillMapWithLLMMock = vi.fn(async () => [])
 
-  vi.doMock('../../../src/lib/indexing/query', () => ({
-    queryIndex: queryIndexMock,
-  }))
   vi.doMock('../../../src/lib/llm/suggestion', () => ({
     generateSuggestionWithLLM: generateSuggestionWithLLMMock,
   }))
@@ -111,7 +103,7 @@ async function loadBackgroundWithMocks(options?: {
   )
 
   await import('../../../src/background/index')
-  return { chromeState, queryIndexMock, generateSuggestionWithLLMMock }
+  return { chromeState, generateSuggestionWithLLMMock }
 }
 
 async function flushAsync() {
@@ -120,7 +112,7 @@ async function flushAsync() {
   await new Promise(resolve => setTimeout(resolve, 0))
 }
 
-const sampleDoc = {
+const sampleDoc: DocumentIndex = {
   id: 'doc-1',
   fileName: 'passport.pdf',
   type: 'pdf',
@@ -128,10 +120,9 @@ const sampleDoc = {
   language: 'en',
   pageCount: 1,
   pages: [{ page: 1, rawText: 'passport number AB123456', fields: [] }],
-  entities: { identifiers: ['AB123456'] },
-  summary: 'passport',
+  cleanText: 'passport number AB123456',
   usedFields: [],
-} satisfies DocumentIndex
+}
 
 describe('TM5 background workflow', () => {
   beforeEach(() => {
@@ -255,15 +246,12 @@ describe('TM5 background workflow', () => {
     const { chromeState } = await loadBackgroundWithMocks()
     const sendResponse = vi.fn()
 
-    // Non-object values
     chromeState.runtimeOnMessage?.('a plain string', {} as chrome.runtime.MessageSender, sendResponse)
     chromeState.runtimeOnMessage?.(42, {} as chrome.runtime.MessageSender, sendResponse)
     chromeState.runtimeOnMessage?.(null, {} as chrome.runtime.MessageSender, sendResponse)
-    // Object without a string `type` field
     chromeState.runtimeOnMessage?.({ payload: { foo: 'bar' } }, {} as chrome.runtime.MessageSender, sendResponse)
     chromeState.runtimeOnMessage?.({ type: 42 }, {} as chrome.runtime.MessageSender, sendResponse)
 
-    // None of the above should trigger a sendMessage or sendResponse call
     expect(sendResponse).not.toHaveBeenCalled()
     expect(chromeState.sendMessage).not.toHaveBeenCalled()
   })
@@ -330,44 +318,6 @@ describe('TM5 background workflow', () => {
     await flushAsync()
     expect(sendResponse).toHaveBeenCalledWith(
       expect.objectContaining({ ok: true, reason: 'No indexed documents are selected.' })
-    )
-  })
-
-  it('MANUAL_FIELD_FETCH uses regex fallback to extract height from rawText', async () => {
-    const { chromeState } = await loadBackgroundWithMocks({
-      llmConfig: { provider: 'anthropic', apiKey: '', model: 'claude-sonnet-4-6' },
-      queryCandidates: [],
-    })
-    const heightDoc = {
-      id: 'doc-dl',
-      fileName: 'drivers-license.pdf',
-      type: 'pdf' as const,
-      indexedAt: new Date().toISOString(),
-      language: 'en',
-      pageCount: 1,
-      pages: [{ page: 1, rawText: "height: 5'10\"", fields: [] }],
-      entities: { identifiers: [] },
-      summary: 'drivers license',
-      usedFields: [],
-    } satisfies DocumentIndex
-    chromeState.runtimeOnMessage?.(
-      { type: 'CONTEXT_UPDATED', payload: { documents: [heightDoc] } },
-      {} as chrome.runtime.MessageSender
-    )
-    const sendResponse = vi.fn()
-    chromeState.runtimeOnMessage?.(
-      { type: 'MANUAL_FIELD_FETCH', payload: { fields: ['Height'] } },
-      {} as chrome.runtime.MessageSender,
-      sendResponse
-    )
-    await flushAsync()
-    expect(sendResponse).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ok: true,
-        results: expect.arrayContaining([
-          expect.objectContaining({ fieldLabel: 'Height', value: "5'10\"" }),
-        ]),
-      })
     )
   })
 

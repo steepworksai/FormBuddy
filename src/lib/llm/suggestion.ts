@@ -1,49 +1,35 @@
 import { callLLM } from './index'
 import type { LLMConfig, Suggestion } from '../../types'
-import type { QueryCandidate } from '../indexing/query'
 
 type SuggestionPayload = Omit<Suggestion, 'id' | 'usedAt' | 'sessionId'>
 
 const SYSTEM_PROMPT = `You are a form-filling assistant.
-Given a field label and a few candidate snippets, return exactly one best suggestion.
+Given a field label and one or more source documents, return exactly one best value.
 Return ONLY valid JSON with this shape:
 {
   "value": "string or null",
   "sourceFile": "string",
-  "sourcePage": 1,
   "sourceText": "string",
   "reason": "short plain-English reason",
   "confidence": "high | medium | low"
 }
 Rules:
-- Use only the provided snippets. Do not invent values.
-- If nothing matches, return {"value": null, ...} with empty strings.`
-
-function emptySuggestion(fieldId: string, fieldLabel: string): SuggestionPayload {
-  return {
-    fieldId,
-    fieldLabel,
-    value: '',
-    sourceFile: '',
-    sourceText: '',
-    reason: '',
-    confidence: 'low',
-  }
-}
+- Read the cleanText of each document and extract the value that best matches the field label.
+- If nothing matches, return {"value": null, "sourceFile": "", "sourceText": "", "reason": "not found", "confidence": "low"}.
+- Do not invent values not present in the source text.`
 
 export async function generateSuggestionWithLLM(
   fieldId: string,
   fieldLabel: string,
-  candidates: QueryCandidate[],
+  documents: Array<{ fileName: string; cleanText: string }>,
   config: LLMConfig
 ): Promise<SuggestionPayload | null> {
   const userPrompt = JSON.stringify(
     {
       fieldLabel,
-      candidates: candidates.map(c => ({
-        fileName: c.fileName,
-        sourcePage: c.sourcePage ?? null,
-        sourceText: c.sourceText,
+      documents: documents.map(d => ({
+        fileName: d.fileName,
+        cleanText: d.cleanText.slice(0, 4000),
       })),
     },
     null,
@@ -57,7 +43,6 @@ export async function generateSuggestionWithLLM(
     const parsed = JSON.parse(cleaned) as {
       value: string | null
       sourceFile: string
-      sourcePage?: number
       sourceText: string
       reason: string
       confidence: 'high' | 'medium' | 'low'
@@ -66,13 +51,13 @@ export async function generateSuggestionWithLLM(
     if (!parsed.value) return null
 
     return {
-      ...emptySuggestion(fieldId, fieldLabel),
+      fieldId,
+      fieldLabel,
       value: parsed.value,
-      sourceFile: parsed.sourceFile,
-      sourcePage: parsed.sourcePage,
-      sourceText: parsed.sourceText,
-      reason: parsed.reason,
-      confidence: parsed.confidence,
+      sourceFile: parsed.sourceFile ?? documents[0]?.fileName ?? '',
+      sourceText: parsed.sourceText ?? '',
+      reason: parsed.reason ?? '',
+      confidence: parsed.confidence ?? 'medium',
     }
   } catch {
     return null

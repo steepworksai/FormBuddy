@@ -13,7 +13,7 @@ export async function callClaude(
 
   const response = await client.messages.create({
     model: config.model,
-    max_tokens: 1024,
+    max_tokens: 8096,
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],
   })

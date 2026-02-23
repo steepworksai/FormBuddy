@@ -5,9 +5,10 @@ import type { LLMConfig } from '../../types'
 type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp'
 
 const VISION_PROMPT =
-  'Extract all text from this image exactly as it appears. ' +
-  'Preserve line breaks, structure, numbers, dates, and special characters. ' +
-  'Keep label/value pairs on separate lines when present. ' +
+  'Extract all visible text from this image exactly as it appears. ' +
+  'Preserve every label, value, number, date, code, and identifier. ' +
+  'Keep label/value pairs on separate lines. ' +
+  'Do not rephrase, reformat, or omit anything. ' +
   'Return only the extracted text — no commentary, no markdown.'
 
 async function visionAnthropic(base64: string, mediaType: ImageMediaType, config: LLMConfig): Promise<string> {

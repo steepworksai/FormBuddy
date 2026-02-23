@@ -7,7 +7,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs'
-import { resolve, dirname, join } from 'path'
+import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
@@ -16,7 +16,8 @@ import OpenAI from 'openai'
 //  CONFIG — edit these values and hit Run
 // ═══════════════════════════════════════════════════════════════
 
-const DOC_PATH = resolve(__dirname, '..', 'output', 'pdf', '.indexing', 'b9c94168-a656-479d-98b1-1e934fad6163.json')
+// Path to a <uuid>.json file inside your FormBuddy-DB/.indexing folder
+const DOC_PATH = resolve(__dirname, '..', 'output', 'pdf', 'FormBuddy-DB', '.indexing', 'b9c94168-a656-479d-98b1-1e934fad6163.json')
 
 const FIELDS = `
 Driver License Number
@@ -102,35 +103,32 @@ if (!existsSync(DOC_PATH)) {
 }
 const doc = JSON.parse(readFileSync(DOC_PATH, 'utf8'))
 
-// ─── Prompt ───────────────────────────────────────────────────
+// ─── Prompt (mirrors getManualFieldExtractionPrompt() in src/lib/llm/prompts.ts)
 const SYSTEM_PROMPT = `You are a document field extraction assistant.
 
-Given a parsed document JSON and a list of form fields, extract the correct value
-for each field and return ONLY as key-value pairs.
-
-## INPUT FORMAT
-- REFERENCE JSON is provided as "reference_json".
-- FORM FIELDS are provided as "form_fields".
+You are given one or more personal documents (as cleanText) and a list of form fields to fill.
+Read each document's cleanText and extract the best matching value for every field.
 
 ## RULES
-- Extract values from the JSON in this order: entities -> fields -> rawText.
-- Split names correctly: 2 parts = First + Last, 3 parts = First + Middle + Last.
-- Dates must be YYYY-MM-DD format.
-- Strip prefixes from identifiers when clearly present (example: "DL Y123" -> "Y123").
-- Parse addresses into individual components when requested (Line 1, City, State, ZIP).
-- Disambiguate dates by context (past = issued/DOB, future = expiry).
-- If a value is not found, return "Not Found".
+- Split names correctly: 2 parts → First + Last; 3 parts → First + Middle + Last.
+- Dates must be in YYYY-MM-DD format.
+- Strip document-specific prefixes from identifiers when clearly present (e.g. "DL Y123" → "Y123").
+- Parse addresses into individual components when the form asks for them (Line 1, City, State, ZIP).
+- Disambiguate dates by context: past dates → issued / date of birth; future dates → expiry.
+- For multi-document inputs, pick the most specific and confident value across all docs.
+- If a value cannot be found in any document, return "Not Found".
 - Never output placeholder values like "Select", "YYYY-MM-DD", or "123 Main St".
 - Do not include explanations, markdown, tables, bullets, JSON, or extra lines.
 
 ## OUTPUT
-Return ONLY key-value pairs, nothing else.
+Return ONLY key-value pairs, one per line, nothing else.
 Field Name: Extracted Value`
 
 const fields = FIELDS.split('\n').map(f => f.trim()).filter(Boolean)
 
+// Mirrors buildFormAutofillMapWithLLM() payload in src/lib/llm/formMapper.ts
 const payload = {
-  reference_json: [{ fileName: doc.fileName, document: doc }],
+  documents: [{ fileName: doc.fileName, cleanText: doc.cleanText ?? doc.rawText ?? doc.pages?.map(p => p.rawText).join('\n') ?? '' }],
   form_fields: fields.join('\n'),
 }
 const userMessage = JSON.stringify(payload, null, 2)
@@ -139,7 +137,9 @@ const userMessage = JSON.stringify(payload, null, 2)
 console.log('\n╔══════════════════════════════════════╗')
 console.log('║     FormBuddy — LLM Prompt Runner   ║')
 console.log('╚══════════════════════════════════════╝')
+const docCleanText = doc.cleanText ?? doc.rawText ?? doc.pages?.map(p => p.rawText).join('\n') ?? ''
 console.log(`\n📄 Document : ${doc.fileName}`)
+console.log(`📝 cleanText: ${docCleanText.length} chars${doc.cleanText ? '' : ' (rawText fallback — run indexing with API key to generate cleanText)'}`)
 console.log(`🤖 Provider : ${PROVIDER}  /  ${MODEL}`)
 console.log(`🔑 API key  : ${API_KEY.slice(0, 12)}…`)
 console.log(`\n── Fields requested (${fields.length}) ${'─'.repeat(20)}`)

@@ -60,8 +60,7 @@ describe('TM2 manifest', () => {
       language: 'en',
       pageCount: 1,
       pages: [{ page: 1, rawText: 'hello', fields: [] }],
-      entities: {},
-      summary: '',
+      cleanText: 'hello',
       usedFields: [],
     }
 
@@ -86,33 +85,13 @@ describe('TM2 manifest', () => {
       language: 'en',
       pageCount: 1,
       pages: [{ page: 1, rawText: 'abc', fields: [] }],
-      entities: {},
-      summary: '',
+      cleanText: 'abc',
       usedFields: [],
     }
     const manifestEntry = buildManifestEntry(entry, 'sha256:test', 12, false)
     expect(manifestEntry.indexFile).toBe('doc-3.json')
     expect(manifestEntry.llmPrepared).toBe(false)
     expect(manifestEntry.needsReindex).toBe(false)
-  })
-
-  it('buildManifestEntry includes searchIndexFile when provided', () => {
-    const now = new Date().toISOString()
-    const entry: DocumentIndex = {
-      id: 'doc-4',
-      fileName: 'doc.pdf',
-      type: 'pdf',
-      indexedAt: now,
-      language: 'en',
-      pageCount: 1,
-      pages: [],
-      entities: {},
-      summary: '',
-      usedFields: [],
-    }
-    const manifestEntry = buildManifestEntry(entry, 'sha256:xyz', 500, true, 'doc-4.search.json')
-    expect(manifestEntry.searchIndexFile).toBe('doc-4.search.json')
-    expect(manifestEntry.llmPrepared).toBe(true)
   })
 })
 
@@ -121,12 +100,15 @@ describe('FormKV cache operations', () => {
     version: '1.0',
     signature: 'sig-abc',
     generatedAt: new Date().toISOString(),
+    documents: [{ fileName: 'profile.pdf', cleanText: 'Email Address: user@example.com' }],
+    requestedFields: ['Email Address'],
     mappings: [
       {
         fieldId: 'email',
         fieldLabel: 'Email Address',
         value: 'user@example.com',
         sourceFile: 'profile.pdf',
+        sourceText: 'Email Address: user@example.com',
         reason: 'Found in profile.pdf',
         confidence: 'high',
       },

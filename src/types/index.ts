@@ -69,25 +69,9 @@ export interface DocumentIndex {
   language: string;
   pageCount: number;
   pages: PageEntry[];
-  entities: Record<string, string[]>;
-  summary: string;
+  rawText?: string;    // only present before LLM cleanup; cleared once cleanText is stored
+  cleanText: string;
   usedFields: UsedField[];
-  searchIndex?: SearchIndexFile;
-}
-
-export interface SearchIndexItem {
-  fieldLabel: string;
-  value: string;
-  aliases: string[];
-  sourceText: string;
-  confidence: 'high' | 'medium' | 'low';
-}
-
-export interface SearchIndexFile {
-  version: string;
-  generatedAt: string;
-  items: SearchIndexItem[];
-  autofill?: Record<string, string>;
 }
 
 export interface FormKVMapping {
@@ -95,6 +79,7 @@ export interface FormKVMapping {
   fieldLabel: string;
   value: string;
   sourceFile: string;
+  sourceText: string;  // verbatim snippet from cleanText that supports the value
   reason: string;
   confidence: 'high' | 'medium' | 'low';
 }
@@ -103,6 +88,8 @@ export interface FormKVCacheFile {
   version: string;
   signature: string;
   generatedAt: string;
+  documents: Array<{ fileName: string; cleanText: string }>;  // inputs sent to LLM
+  requestedFields: string[];  // form fields submitted for extraction
   mappings: FormKVMapping[];
 }
 
@@ -111,7 +98,6 @@ export interface ManifestEntry {
   fileName: string;
   type: string;
   indexFile: string;
-  searchIndexFile?: string;
   checksum: string;
   sizeBytes: number;
   indexedAt: string;

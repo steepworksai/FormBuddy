@@ -4,19 +4,13 @@ import {
   writeManifest,
   readIndexEntry,
   writeIndexEntry,
-  readSearchIndexEntry,
-  writeSearchIndexEntry,
   buildManifestEntry,
 } from './manifest'
 import { extractTextFromPDF, PDFTooLargeError } from '../parser/pdf'
 import { extractTextFromImage, ocrCanvases } from '../parser/ocr'
-import { extractEntitiesWithLLM } from '../llm/extractor'
-import { organizeFieldsWithLLM } from '../llm/fieldOrganizer'
-import { buildSearchIndexWithLLM } from '../llm/searchIndex'
-import { extractFieldsFromRawText } from './fieldExtract'
-import { buildLocalSearchIndex, mergeSearchIndexes } from './autofill'
+import { cleanTextWithLLM } from '../llm/extractor'
 import { getTypeInfo } from '../config/supportedTypes'
-import type { DocumentIndex, FieldEntry, LLMConfig, PageEntry, SearchIndexFile } from '../../types'
+import type { DocumentIndex, LLMConfig, PageEntry } from '../../types'
 
 export type IndexResult =
   | { status: 'indexed'; entry: DocumentIndex }
@@ -40,18 +34,6 @@ function errorMessage(err: unknown): string {
   }
 }
 
-function dedupeFields(fields: FieldEntry[]): FieldEntry[] {
-  const seen = new Set<string>()
-  const result: FieldEntry[] = []
-  for (const field of fields) {
-    const key = `${field.label.toLowerCase()}|${field.value.toLowerCase()}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    result.push(field)
-  }
-  return result
-}
-
 export async function indexDocument(
   file: File,
   dirHandle: FileSystemDirectoryHandle,
@@ -67,21 +49,11 @@ export async function indexDocument(
 
   const existing = manifest.documents.find(d => d.fileName === file.name)
   const previousEntry = existing ? await readIndexEntry(dirHandle, `${existing.id}.json`) : null
-  const previousSearchIndex = existing?.searchIndexFile
-    ? await readSearchIndexEntry(dirHandle, existing.searchIndexFile)
-    : null
   const llmAlreadyPrepared =
     existing?.llmPrepared === true ||
-    !!(
-      previousEntry &&
-      (
-        (previousEntry.summary && previousEntry.summary.trim().length > 0) ||
-        Object.values(previousEntry.entities ?? {}).some(values => values.length > 0)
-      )
-    )
+    !!(previousEntry && previousEntry.cleanText && previousEntry.cleanText.trim().length > 0)
+
   if (existing && existing.checksum === checksum && !existing.needsReindex) {
-    // Verify the index file actually exists — it could be missing if a previous session
-    // wrote the manifest but the <uuid>.json was lost (folder moved, extension reloaded, etc.)
     const indexExists = await readIndexEntry(dirHandle, `${existing.id}.json`)
     if (indexExists) {
       return { status: 'skipped', fileName: file.name }
@@ -89,6 +61,9 @@ export async function indexDocument(
   }
 
   // ── Phase 1: Parse ────────────────────────────────────────
+  // PDFs: text extracted via pdfjs-dist (+ LLM OCR for scanned pages)
+  // Images: text extracted via LLM vision
+  // Both produce pages[].rawText before Phase 2.
   onPhase?.('parsing')
 
   const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
@@ -107,30 +82,23 @@ export async function indexDocument(
         console.warn(`[FormBuddy] PDF too large: ${file.name} (${err.pageCount} pages)`)
         return { status: 'too-large', fileName: file.name, pageCount: err.pageCount }
       }
-      // Parse error — index with empty content so the file still appears in the manifest
       console.warn(`[FormBuddy] PDF parse failed for ${file.name}:`, errorMessage(err))
       rawPages = []
       pageCount = 0
     }
 
-    // ── Phase 2 (conditional): OCR scanned pages ──────────
     const scannedPages = rawPages
       .filter(p => p.canvas !== undefined)
       .map(p => ({ pageNum: p.page, canvas: p.canvas! }))
 
     if (scannedPages.length > 0) {
       onPhase?.('ocr')
-
       let ocrResults = new Map<number, string>()
       try {
         ocrResults = await ocrCanvases(scannedPages, onProgress, llmConfig)
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        console.warn(`[FormBuddy] OCR failed for ${file.name}:`, message)
-        // Fall back to empty text for scanned pages so the file is still indexed
+        console.warn(`[FormBuddy] OCR failed for ${file.name}:`, err instanceof Error ? err.message : String(err))
       }
-
-      // Merge OCR text back into the page list
       pages = rawPages.map(p =>
         p.canvas
           ? { page: p.page, rawText: ocrResults.get(p.page) ?? '', fields: [] }
@@ -142,92 +110,40 @@ export async function indexDocument(
 
   } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
     onPhase?.('ocr')
-    // For images, OCR is required for useful indexing. If it fails, surface an error
-    // so the UI can show the reason instead of silently writing an empty index entry.
     const result = await extractTextFromImage(file, onProgress, llmConfig)
     pages = result.pages
     pageCount = result.pageCount
 
   } else {
-    // Plain text / note
     const text = await file.text()
     pages = [{ page: 1, rawText: text, fields: [] }]
     pageCount = 1
   }
 
-  // ── Phase 3: LLM Entity Extraction ───────────────────────
-  pages = pages.map(page => ({
-    ...page,
-    fields: page.fields.length > 0 ? page.fields : extractFieldsFromRawText(page.rawText),
-  }))
-
-  if (llmConfig?.apiKey && !llmAlreadyPrepared) {
-    const extractedCount = pages.reduce((acc, page) => acc + page.fields.length, 0)
-    if (extractedCount < 3) {
-      try {
-        const fullText = pages.map(p => p.rawText).join('\n')
-        const organizedFields = await organizeFieldsWithLLM(fullText, file.name, llmConfig)
-        if (organizedFields.length > 0) {
-          const firstPage = pages[0] ?? { page: 1, rawText: '', fields: [] }
-          firstPage.fields = dedupeFields([...firstPage.fields, ...organizedFields])
-          pages = [firstPage, ...pages.slice(1)]
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        console.warn(`[FormBuddy] Field organizer failed for ${file.name}:`, message)
-      }
-    }
-  }
-
-  let entities: Record<string, string[]> = {}
-  let summary = ''
-  let searchIndex: SearchIndexFile | undefined = undefined
+  // ── Phase 2: LLM Text Cleanup ─────────────────────────────
+  // Same step for both PDFs and images.
+  // Takes raw text from Phase 1 and produces a clean, de-noised version.
+  const rawText = pages.map(p => p.rawText).join('\n')
+  let cleanText = rawText
 
   let llmPreparedThisRun = false
   if (llmConfig?.apiKey && !llmAlreadyPrepared) {
     onPhase?.('extracting')
     try {
-      const fullText = pages.map(p => p.rawText).join('\n')
-      const result = await extractEntitiesWithLLM(fullText, file.name, llmConfig)
-      entities = result.entities
-      summary = result.summary
+      cleanText = await cleanTextWithLLM(rawText, file.name, llmConfig)
       llmPreparedThisRun = true
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.warn(`[FormBuddy] LLM extraction failed for ${file.name}:`, message)
-      // Do not rethrow — still index the document with the parsed text and no entities
+      console.warn(`[FormBuddy] Text cleanup failed for ${file.name}:`, errorMessage(err))
     }
-  } else {
-    if (llmAlreadyPrepared && previousEntry) {
-      entities = previousEntry.entities
-      summary = previousEntry.summary
-    }
+  } else if (llmAlreadyPrepared && previousEntry) {
+    cleanText = previousEntry.cleanText ?? rawText
   }
 
-  let localSearchIndex
-  try {
-    localSearchIndex = buildLocalSearchIndex({ pages, entities })
-    searchIndex = localSearchIndex
-  } catch (err) {
-    console.warn(`[FormBuddy] buildLocalSearchIndex failed for ${file.name}:`, errorMessage(err))
-    localSearchIndex = undefined
-  }
+  // ── Phase 3: Write ────────────────────────────────────────
+  // Once cleanText is stored, raw text is no longer needed — drop it to save space.
+  // If cleanup hasn't run yet (no API key), raw text is kept as the only text available.
+  const cleanupComplete = llmPreparedThisRun || llmAlreadyPrepared
 
-  if (llmConfig?.apiKey) {
-    try {
-      const allFields = pages.flatMap(page => page.fields)
-      const fullText = pages.map(p => p.rawText).join('\n')
-      const generatedSearchIndex = await buildSearchIndexWithLLM(fullText, allFields, file.name, llmConfig)
-      searchIndex = localSearchIndex ? mergeSearchIndexes(localSearchIndex, generatedSearchIndex) : generatedSearchIndex
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.warn(`[FormBuddy] Search index generation failed for ${file.name}:`, message)
-    }
-  } else if (previousSearchIndex) {
-    searchIndex = localSearchIndex ? mergeSearchIndexes(localSearchIndex, previousSearchIndex) : previousSearchIndex
-  }
-
-  // ── Phase 4: Write ────────────────────────────────────────
   onPhase?.('writing')
 
   const id = existing?.id ?? crypto.randomUUID()
@@ -244,9 +160,9 @@ export async function indexDocument(
     indexedAt: new Date().toISOString(),
     language: 'en',
     pageCount: pageCount ?? 0,
-    pages,
-    entities,
-    summary,
+    pages: cleanupComplete ? pages.map(p => ({ ...p, rawText: '' })) : pages,
+    rawText: cleanupComplete ? undefined : rawText,
+    cleanText,
     usedFields: existing
       ? ((await readIndexEntry(dirHandle, `${id}.json`))?.usedFields ?? [])
       : [],
@@ -259,27 +175,12 @@ export async function indexDocument(
     throw err
   }
 
-  const searchIndexFile = `${id}.search.index.json`
-  if (searchIndex) {
-    try {
-      await writeSearchIndexEntry(dirHandle, searchIndexFile, searchIndex)
-    } catch (err) {
-      console.warn(`[FormBuddy] writeSearchIndexEntry failed for ${file.name}:`, errorMessage(err))
-    }
-  }
-
   const updatedManifest = {
     ...manifest,
     lastUpdated: new Date().toISOString(),
     documents: [
       ...manifest.documents.filter(d => d.fileName !== file.name),
-      buildManifestEntry(
-        indexEntry,
-        checksum,
-        file.size,
-        llmAlreadyPrepared || llmPreparedThisRun,
-        searchIndex ? searchIndexFile : undefined
-      ),
+      buildManifestEntry(indexEntry, checksum, file.size, llmAlreadyPrepared || llmPreparedThisRun),
     ],
   }
   try {

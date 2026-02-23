@@ -21,8 +21,7 @@ const fields: FormFieldInput[] = [
 const documents: FormMapDocumentInput[] = [
   {
     fileName: 'profile.pdf',
-    autofill: { first_name: 'Jane Doe' },
-    items: [{ fieldLabel: 'Email', value: 'jane@example.com', aliases: [] }],
+    cleanText: 'First Name: Jane Doe\nEmail Address: jane@example.com\nDate of Birth: 1990-05-20',
   },
 ]
 

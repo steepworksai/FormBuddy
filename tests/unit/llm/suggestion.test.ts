@@ -23,7 +23,7 @@ describe('TM3 suggestion parsing', () => {
     const result = await generateSuggestionWithLLM(
       'passport_number',
       'Passport Number',
-      [{ documentId: 'd1', fileName: 'passport.pdf', sourcePage: 1, sourceText: 'Passport Number AB1234567', score: 4 }],
+      [{ fileName: 'passport.pdf', cleanText: 'Passport Number AB1234567' }],
       { provider: 'anthropic', apiKey: 'x', model: 'claude-sonnet-4-6' }
     )
 
