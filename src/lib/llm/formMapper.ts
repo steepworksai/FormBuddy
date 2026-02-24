@@ -5,6 +5,7 @@ import type { FormKVMapping, LLMConfig } from '../../types'
 export interface FormFieldInput {
   fieldId: string
   fieldLabel: string
+  placeholder?: string
 }
 
 export interface FormMapDocumentInput {
@@ -84,12 +85,15 @@ export async function buildFormAutofillMapWithLLM(
 ): Promise<FormKVMapping[]> {
   if (!fields.length || !documents.length) return []
 
+  const fieldLines = fields.map(f =>
+    f.placeholder ? `${f.fieldLabel} [format: ${f.placeholder}]` : f.fieldLabel
+  )
   const payload = {
     documents: documents.map(doc => ({
       fileName: doc.fileName,
       cleanText: doc.cleanText,
     })),
-    form_fields: options?.rawFieldsInput?.trim() || fields.map(f => f.fieldLabel).join('\n'),
+    form_fields: options?.rawFieldsInput?.trim() || fieldLines.join('\n'),
   }
 
   const systemPrompt = getManualFieldExtractionPrompt()

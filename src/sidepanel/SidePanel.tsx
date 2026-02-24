@@ -945,10 +945,12 @@ export default function SidePanel() {
     try {
       // Step 1: Detect form fields on the active page
       const scanResp = await chrome.runtime.sendMessage({ type: 'GET_PAGE_FIELDS' }) as
-        | { ok: boolean; fields: Array<{ fieldLabel: string }>; reason?: string }
+        | { ok: boolean; fields: Array<{ fieldLabel: string; placeholder?: string }>; reason?: string }
         | undefined
-      const labels = (scanResp?.fields ?? []).map(f => f.fieldLabel.trim()).filter(Boolean)
-      if (!labels.length) {
+      const scannedFields = (scanResp?.fields ?? [])
+        .filter(f => f.fieldLabel?.trim())
+        .map(f => ({ fieldLabel: f.fieldLabel.trim(), placeholder: f.placeholder }))
+      if (!scannedFields.length) {
         setError(scanResp?.reason ?? 'No form fields detected. Make sure you are on a web form.')
         return
       }
@@ -964,7 +966,7 @@ export default function SidePanel() {
       // Step 3: Find matching values from documents
       const fetchResp = await chrome.runtime.sendMessage({
         type: 'MANUAL_FIELD_FETCH',
-        payload: { fields: labels },
+        payload: { fields: scannedFields },
       }) as {
         ok?: boolean
         message?: string
@@ -1241,7 +1243,11 @@ export default function SidePanel() {
           {error && (
             <div style={styles.errorRow}>
               <p style={styles.errorMsg}>{error}</p>
-          <button style={styles.retryBtn} onClick={() => { setError(null); void handleScanAndFill() }}>
+          <button
+            style={{ ...styles.retryBtn, opacity: fillBusy ? 0.45 : 1, cursor: fillBusy ? 'default' : 'pointer' }}
+            disabled={fillBusy}
+            onClick={() => { setError(null); void handleScanAndFill() }}
+          >
             <RotateCw size={11} /> Retry
           </button>
             </div>

@@ -9,6 +9,7 @@ interface FieldFocusedPayload {
   fieldId: string
   fieldLabel: string
   tagName: string
+  placeholder?: string
 }
 
 let lastFocusedEl: FieldElement | null = null
@@ -60,6 +61,16 @@ function getFieldLabel(el: FieldElement): string {
   const ariaLabel = normalize(el.getAttribute('aria-label'))
   if (ariaLabel) return ariaLabel
 
+  // aria-labelledby: resolve IDs to text
+  const ariaLabelledBy = el.getAttribute('aria-labelledby')
+  if (ariaLabelledBy) {
+    const text = ariaLabelledBy.trim().split(/\s+/)
+      .map(id => normalize(document.getElementById(id)?.textContent))
+      .filter(Boolean)
+      .join(' ')
+    if (text) return text
+  }
+
   if (el.id) {
     const linkedLabel = document.querySelector(`label[for="${CSS.escape(el.id)}"]`)
     if (linkedLabel instanceof HTMLLabelElement) {
@@ -82,6 +93,23 @@ function getFieldLabel(el: FieldElement): string {
   return ''
 }
 
+// Regex for common date/time format patterns embedded anywhere in an attribute value
+const FORMAT_PATTERN_RE = /\b(DD[\/\-]MM[\/\-]YYYY|MM[\/\-]DD[\/\-]YYYY|YYYY[\/\-]MM[\/\-]DD|DD[\/\-]MM[\/\-]YY|HH:MM)\b/i
+
+function extractFormatHint(el: FieldElement): string | undefined {
+  // placeholder is the primary source
+  if ('placeholder' in el) {
+    const ph = normalize((el as HTMLInputElement | HTMLTextAreaElement).placeholder)
+    if (ph) return ph
+  }
+  // Scan all element attributes for an embedded date/time format pattern
+  for (const attr of Array.from(el.attributes)) {
+    const m = attr.value.match(FORMAT_PATTERN_RE)
+    if (m) return m[0]
+  }
+  return undefined
+}
+
 function getFieldId(el: FieldElement, fieldLabel: string): string {
   return normalize(el.id) || normalize(el.name) || fieldLabel
 }
@@ -100,6 +128,7 @@ function buildPayload(el: FieldElement): FieldFocusedPayload | null {
     fieldId: getFieldId(el, fieldLabel),
     fieldLabel,
     tagName: el.tagName,
+    placeholder: extractFormatHint(el),
   }
 }
 
@@ -166,6 +195,7 @@ function buildFormSchemaSnapshot(): FormSchemaSnapshot | null {
       fieldId,
       fieldLabel,
       tagName: element.tagName,
+      placeholder: extractFormatHint(element),
     }
     const key = payload.fieldId.toLowerCase()
     if (seen.has(key)) continue
@@ -512,6 +542,22 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
 
   if (msg.type === 'SUGGESTION_APPLIED') {
     clearHoverCard()
+  }
+})
+
+document.addEventListener('formbuddy:fill-section', async (event) => {
+  const { fields, sectionId } = (event as CustomEvent).detail as { fields: string[]; sectionId: string }
+  try {
+    const response = await new Promise<{ ok: boolean; filled?: number; reason?: string }>(resolve => {
+      chrome.runtime.sendMessage({ type: 'SECTION_FILL_REQUEST', payload: { fields } }, resolve)
+    })
+    document.dispatchEvent(new CustomEvent('formbuddy:fill-result', {
+      detail: { sectionId, filled: response?.filled ?? 0, ok: response?.ok ?? false, reason: response?.reason },
+    }))
+  } catch {
+    document.dispatchEvent(new CustomEvent('formbuddy:fill-result', {
+      detail: { sectionId, filled: 0, ok: false },
+    }))
   }
 })
 

@@ -1,0 +1,28 @@
+  FormBuddy requires an API key from one of three supported providers. No FormBuddy account exists.
+
+  SETUP FOR REVIEW
+
+  1. Click the toolbar icon to open the side panel.
+  2. Click the settings gear, paste an API key from one of:
+    - Anthropic: console.anthropic.com (new accounts get starter credits)
+    - OpenAI: platform.openai.com (requires billing)
+    - Google Gemini: aistudio.google.com (free tier, no card needed) — recommended for review
+  Select the provider and model, click Verify.
+  3. Click "Choose Folder", select any local folder. A FormBuddy-DB subfolder is created inside it. No files leave the device.
+  4. Drag a PDF or image into the side panel to index it.
+  5. Go to any web form and click "Scan & Auto Fill".
+
+  TEST WITHOUT YOUR OWN DOCUMENTS
+
+  Sample PDFs and a test HTML form are in the open-source repo at github.com/steepworksai/FormBuddy under /output/. Open output/html/flight-booking-form.html in the browser, index a PDF from output/pdf/, then click Scan & Auto Fill.
+
+  PERMISSIONS
+
+  storage: API key and index stored locally only
+  activeTab / scripting: injects content script to detect and fill fields
+  sidePanel: hosts the main UI
+  webNavigation / tabs: tracks navigation for multi-page forms
+  contextMenus: right-click shortcut to add content to folder
+  host_permissions all_urls: required to fill forms on any site
+
+  No data is sent to any FormBuddy server. Only matched document snippets are sent to the user's chosen LLM provider.

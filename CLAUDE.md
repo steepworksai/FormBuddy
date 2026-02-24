@@ -15,7 +15,7 @@ A Chrome & Edge Extension (Manifest V3) that acts as a universal form-filling as
 ---
 
 ## Company / Publisher
-**Waystone Studios**
+**Steepworksai**
 Used as developer name on both store listings and in LICENSE, README, and docs footers.
 
 ---

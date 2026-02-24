@@ -6,7 +6,8 @@ Read each document's cleanText and extract the best matching value for every fie
 
 ## RULES
 - Split names correctly: 2 parts → First + Last; 3 parts → First + Middle + Last.
-- Dates must be in YYYY-MM-DD format.
+- If a field includes a format hint like "[format: DD/MM/YYYY]", output the value in exactly that format and strip the hint from the field name in your output key.
+- Without a format hint, output dates exactly as found in the document.
 - Strip document-specific prefixes from identifiers when clearly present (e.g. "DL Y123" → "Y123").
 - Parse addresses into individual components when the form asks for them (Line 1, City, State, ZIP).
 - Disambiguate dates by context: past dates → issued / date of birth; future dates → expiry.

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Flight Booking — Passenger Details</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #111; background: #f0f4f8; }
+    .page { max-width: 920px; margin: 32px auto; padding-bottom: 40px; }
+    .top-bar { background: #1a3a6e; color: #fff; padding: 16px 28px; border-radius: 10px 10px 0 0; display: flex; justify-content: space-between; align-items: center; }
+    .top-bar h1 { font-size: 18px; }
+    .top-bar .flight { font-size: 12px; opacity: 0.8; margin-top: 2px; }
+    .top-bar .step { background: rgba(255,255,255,0.2); padding: 6px 14px; border-radius: 20px; font-size: 12px; }
+    .card { background: #fff; border: 1px solid #dde3ec; margin-bottom: 0; padding: 28px; }
+    .card:last-of-type { border-radius: 0 0 10px 10px; }
+    .passenger-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e8edf7; }
+    .pax-badge { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 16px; color: #fff; flex-shrink: 0; }
+    .pax-1 { background: #1a3a6e; }
+    .pax-2 { background: #6b21a8; }
+    .pax-3 { background: #0f5132; }
+    .passenger-header h2 { font-size: 15px; font-weight: bold; color: #1a3a6e; }
+    .passenger-header p { font-size: 11px; color: #888; }
+    label { display: block; font-size: 11px; color: #555; margin-bottom: 3px; font-weight: bold; }
+    input[type=text], input[type=email], input[type=tel] {
+      width: 100%; border: 1px solid #c5cdd8; border-radius: 6px; padding: 9px 12px;
+      font-size: 13px; background: #fafbff; transition: border-color 0.2s;
+    }
+    input:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+    .row { display: grid; gap: 14px; margin-bottom: 14px; }
+    .col-2 { grid-template-columns: 1fr 1fr; }
+    .col-3 { grid-template-columns: 1fr 1fr 1fr; }
+    .col-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+    .section-label { font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #4f46e5; margin-bottom: 10px; margin-top: 16px; }
+    .divider { border: none; border-top: 1px solid #eef0f5; margin: 20px 0; }
+    .submit-bar { background: #fff; border: 1px solid #dde3ec; border-top: none; border-radius: 0 0 10px 10px; padding: 20px 28px; display: flex; justify-content: flex-end; gap: 12px; }
+    .btn-secondary { padding: 10px 24px; border: 1px solid #c5cdd8; background: #fff; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .btn-primary { padding: 10px 32px; background: linear-gradient(135deg, #1a3a6e, #4f46e5); color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; }
+    .required::after { content: ' *'; color: #e53e3e; }
+    .field { display: flex; flex-direction: column; }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="top-bar">
+    <div>
+      <h1>Passenger Details</h1>
+      <div class="flight">Flight AX 204 · New York (JFK) → London (LHR) · 14 Jun 2025</div>
+    </div>
+    <div class="step">Step 2 of 4 — Traveller Info</div>
+  </div>
+
+  <!-- PASSENGER 1 -->
+  <div class="card">
+    <div class="passenger-header">
+      <div class="pax-badge pax-1">1</div>
+      <div>
+        <h2>Passenger 1 — Lead Traveller</h2>
+        <p>Information must match passport exactly</p>
+      </div>
+    </div>
+
+    <div class="section-label">Personal Details</div>
+    <div class="row col-3">
+      <div class="field"><label class="required">First Name</label><input type="text" id="p1_first_name" name="p1_first_name" placeholder="As on passport" /></div>
+      <div class="field"><label>Middle Name</label><input type="text" id="p1_middle_name" name="p1_middle_name" placeholder="If applicable" /></div>
+      <div class="field"><label class="required">Last Name</label><input type="text" id="p1_last_name" name="p1_last_name" placeholder="As on passport" /></div>
+    </div>
+    <div class="row col-3">
+      <div class="field"><label class="required">Date of Birth</label><input type="text" id="p1_dob" name="p1_dob" placeholder="DD/MM/YYYY" /></div>
+      <div class="field"><label class="required">Gender</label><input type="text" id="p1_gender" name="p1_gender" placeholder="Male / Female" /></div>
+      <div class="field"><label>Nationality</label><input type="text" id="p1_nationality" name="p1_nationality" placeholder="e.g. American" /></div>
+    </div>
+
+    <div class="section-label">Passport Details</div>
+    <div class="row col-3">
+      <div class="field"><label class="required">Passport Number</label><input type="text" id="p1_passport_no" name="p1_passport_no" placeholder="e.g. P12345678" /></div>
+      <div class="field"><label class="required">Date of Expiry</label><input type="text" id="p1_passport_expiry" name="p1_passport_expiry" placeholder="DD/MM/YYYY" /></div>
+      <div class="field"><label>Date of Issue</label><input type="text" id="p1_passport_issued" name="p1_passport_issued" placeholder="DD/MM/YYYY" /></div>
+    </div>
+
+    <div class="section-label">Contact Details</div>
+    <div class="row col-3">
+      <div class="field"><label class="required">Phone Number</label><input type="tel" id="p1_phone" name="p1_phone" placeholder="+1 (XXX) XXX-XXXX" /></div>
+      <div class="field"><label class="required">Email Address</label><input type="email" id="p1_email" name="p1_email" placeholder="email@example.com" /></div>
+      <div class="field"><label>Home Address</label><input type="text" id="p1_address" name="p1_address" placeholder="Street, City, State ZIP" /></div>
+    </div>
+  </div>
+
+  <!-- PASSENGER 2 -->
+  <div class="card" style="border-top: none;">
+    <hr class="divider" style="margin-top:0;" />
+    <div class="passenger-header">
+      <div class="pax-badge pax-2">2</div>
+      <div>
+        <h2>Passenger 2</h2>
+        <p>Information must match passport exactly</p>
+      </div>
+    </div>
+
+    <div class="section-label">Personal Details</div>
+    <div class="row col-3">
+      <div class="field"><label class="required">First Name</label><input type="text" id="p2_first_name" name="p2_first_name" placeholder="As on passport" /></div>
+      <div class="field"><label>Middle Name</label><input type="text" id="p2_middle_name" name="p2_middle_name" placeholder="If applicable" /></div>
+      <div class="field"><label class="required">Last Name</label><input type="text" id="p2_last_name" name="p2_last_name" placeholder="As on passport" /></div>
+    </div>
+    <div class="row col-3">
+      <div class="field"><label class="required">Date of Birth</label><input type="text" id="p2_dob" name="p2_dob" placeholder="DD/MM/YYYY" /></div>
+      <div class="field"><label class="required">Gender</label><input type="text" id="p2_gender" name="p2_gender" placeholder="Male / Female" /></div>
+      <div class="field"><label>Nationality</label><input type="text" id="p2_nationality" name="p2_nationality" placeholder="e.g. American" /></div>
+    </div>
+
+    <div class="section-label">Passport Details</div>
+    <div class="row col-3">
+      <div class="field"><label class="required">Passport Number</label><input type="text" id="p2_passport_no" name="p2_passport_no" placeholder="e.g. P98765432" /></div>
+      <div class="field"><label class="required">Date of Expiry</label><input type="text" id="p2_passport_expiry" name="p2_passport_expiry" placeholder="DD/MM/YYYY" /></div>
+      <div class="field"><label>Date of Issue</label><input type="text" id="p2_passport_issued" name="p2_passport_issued" placeholder="DD/MM/YYYY" /></div>
+    </div>
+
+    <div class="section-label">Contact Details</div>
+    <div class="row col-3">
+      <div class="field"><label class="required">Phone Number</label><input type="tel" id="p2_phone" name="p2_phone" placeholder="+1 (XXX) XXX-XXXX" /></div>
+      <div class="field"><label class="required">Email Address</label><input type="email" id="p2_email" name="p2_email" placeholder="email@example.com" /></div>
+      <div class="field"><label>Home Address</label><input type="text" id="p2_address" name="p2_address" placeholder="Street, City, State ZIP" /></div>
+    </div>
+  </div>
+
+  <!-- PASSENGER 3 -->
+  <div class="card" style="border-top: none;">
+    <hr class="divider" style="margin-top:0;" />
+    <div class="passenger-header">
+      <div class="pax-badge pax-3">3</div>
+      <div>
+        <h2>Passenger 3</h2>
+        <p>Information must match passport exactly</p>
+      </div>
+    </div>
+
+    <div class="section-label">Personal Details</div>
+    <div class="row col-3">
+      <div class="field"><label class="required">First Name</label><input type="text" id="p3_first_name" name="p3_first_name" placeholder="As on passport" /></div>
+      <div class="field"><label>Middle Name</label><input type="text" id="p3_middle_name" name="p3_middle_name" placeholder="If applicable" /></div>
+      <div class="field"><label class="required">Last Name</label><input type="text" id="p3_last_name" name="p3_last_name" placeholder="As on passport" /></div>
+    </div>
+    <div class="row col-3">
+      <div class="field"><label class="required">Date of Birth</label><input type="text" id="p3_dob" name="p3_dob" placeholder="DD/MM/YYYY" /></div>
+      <div class="field"><label class="required">Gender</label><input type="text" id="p3_gender" name="p3_gender" placeholder="Male / Female" /></div>
+      <div class="field"><label>Nationality</label><input type="text" id="p3_nationality" name="p3_nationality" placeholder="e.g. American" /></div>
+    </div>
+
+    <div class="section-label">Passport Details</div>
+    <div class="row col-3">
+      <div class="field"><label class="required">Passport Number</label><input type="text" id="p3_passport_no" name="p3_passport_no" placeholder="e.g. P55512349" /></div>
+      <div class="field"><label class="required">Date of Expiry</label><input type="text" id="p3_passport_expiry" name="p3_passport_expiry" placeholder="DD/MM/YYYY" /></div>
+      <div class="field"><label>Date of Issue</label><input type="text" id="p3_passport_issued" name="p3_passport_issued" placeholder="DD/MM/YYYY" /></div>
+    </div>
+
+    <div class="section-label">Contact Details</div>
+    <div class="row col-3">
+      <div class="field"><label class="required">Phone Number</label><input type="tel" id="p3_phone" name="p3_phone" placeholder="+1 (XXX) XXX-XXXX" /></div>
+      <div class="field"><label class="required">Email Address</label><input type="email" id="p3_email" name="p3_email" placeholder="email@example.com" /></div>
+      <div class="field"><label>Home Address</label><input type="text" id="p3_address" name="p3_address" placeholder="Street, City, State ZIP" /></div>
+    </div>
+  </div>
+
+  <div class="submit-bar">
+    <button class="btn-secondary" type="button">Back</button>
+    <button class="btn-primary" type="button">Continue to Seat Selection →</button>
+  </div>
+
+</div>
+</body>
+</html>

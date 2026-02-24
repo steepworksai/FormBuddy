@@ -21,14 +21,20 @@ interface FieldFocusedPayload {
   fieldId: string
   fieldLabel: string
   tagName?: string
+  placeholder?: string
 }
 
 interface ContextUpdatedPayload {
   documents: DocumentIndex[]
 }
 
+interface FieldHint {
+  fieldLabel: string
+  placeholder?: string
+}
+
 interface ManualFieldFetchPayload {
-  fields: string[]
+  fields: Array<string | FieldHint>
   rawInput?: string
 }
 
@@ -39,6 +45,7 @@ type IncomingMessage =
   | { type: 'FORM_SCHEMA' }
   | { type: 'FORM_KV_FORCE_REFRESH' }
   | { type: 'MANUAL_FIELD_FETCH'; payload: ManualFieldFetchPayload }
+  | { type: 'SECTION_FILL_REQUEST'; payload: ManualFieldFetchPayload }
   | { type: 'GET_PAGE_FIELDS' }
   | { type: 'BULK_AUTOFILL'; payload: { mappings?: Array<{ fieldLabel: string; value: string }> } }
   | { type: 'FIELD_FOCUSED'; payload: FieldFocusedPayload }
@@ -64,29 +71,6 @@ const rejectedFieldIds = new Set<string>()
  * This avoids the "Receiving end does not exist" error on tabs that were open
  * before the extension was installed or reloaded.
  */
-/**
- * Reload a tab and resolve when it reaches status 'complete'.
- * Times out after 10 seconds to avoid hanging forever.
- */
-function reloadAndWait(tabId: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(onUpdated)
-      reject(new Error('Page took too long to reload. Try again.'))
-    }, 10_000)
-
-    function onUpdated(updatedTabId: number, changeInfo: { status?: string }) {
-      if (updatedTabId !== tabId || changeInfo.status !== 'complete') return
-      chrome.tabs.onUpdated.removeListener(onUpdated)
-      clearTimeout(timeout)
-      resolve()
-    }
-
-    chrome.tabs.onUpdated.addListener(onUpdated)
-    chrome.tabs.reload(tabId)
-  })
-}
-
 /**
  * Ensure the content script is alive in the given tab, then send a message.
  * Always injects the content script first — the script's __FORMBUDDY_CONTENT_INIT__
@@ -161,14 +145,21 @@ function normalizeKey(value: string): string {
   return value.toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
-function manualFetchSignature(labels: string[], rawInput: string | undefined): string {
+function manualFetchSignature(fieldHints: FieldHint[], rawInput: string | undefined): string {
   const docsSig = indexedDocuments
     .map(doc => `${doc.id}:${doc.indexedAt}:${doc.fileName}`)
     .sort()
     .join('|')
-  const fieldsSig = labels.map(label => normalizeKey(label)).sort().join('|')
+  const fieldsSig = fieldHints
+    .map(f => `${normalizeKey(f.fieldLabel)}${f.placeholder ? '|' + f.placeholder : ''}`)
+    .sort()
+    .join('|')
   const rawSig = normalizeKey(rawInput ?? '')
   return `manual_fetch::${docsSig}::${fieldsSig}::${rawSig}`
+}
+
+function toFieldHint(f: string | FieldHint): FieldHint {
+  return typeof f === 'string' ? { fieldLabel: f.trim() } : { fieldLabel: (f.fieldLabel ?? '').trim(), placeholder: f.placeholder }
 }
 
 async function requestFormKVCache(signature: string): Promise<FormKVMapping[] | null> {
@@ -269,7 +260,7 @@ async function handleFieldFocused(payload: FieldFocusedPayload, sender: chrome.r
   if (!docs.length) return
 
   try {
-    const suggested = await generateSuggestionWithLLM(payload.fieldId, payload.fieldLabel, docs, llmConfig)
+    const suggested = await generateSuggestionWithLLM(payload.fieldId, payload.fieldLabel, docs, llmConfig, payload.placeholder)
     if (!suggested?.value) return
     chrome.runtime.sendMessage({
       type: 'NEW_SUGGESTION',
@@ -293,13 +284,16 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
   reason?: string
 }> {
   const llmConfig = await loadLLMConfig()
-  const labels = (payload.fields ?? []).map(v => v.trim()).filter(Boolean).slice(0, 25)
+  const fieldHints = (payload.fields ?? [])
+    .map(toFieldHint)
+    .filter(f => f.fieldLabel)
+    .slice(0, 50)
 
-  if (!labels.length) return { results: [], reason: 'No fields were provided.' }
+  if (!fieldHints.length) return { results: [], reason: 'No fields were provided.' }
   if (!indexedDocuments.length) return { results: [], reason: 'No indexed documents are selected.' }
   if (!llmConfig?.apiKey) return { results: [], reason: 'No API key configured. Open settings to add your key.' }
 
-  const signature = manualFetchSignature(labels, payload.rawInput)
+  const signature = manualFetchSignature(fieldHints, payload.rawInput)
   const cached = await requestFormKVCache(signature)
   if (cached) {
     const cachedResults = cached.map(mappingToManualResult)
@@ -321,9 +315,10 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
 
   try {
     const llmMappings = await buildFormAutofillMapWithLLM(
-      labels.map(label => ({
-        fieldId: normalizeKey(label).replace(/\s+/g, '_') || label,
-        fieldLabel: label,
+      fieldHints.map(f => ({
+        fieldId: normalizeKey(f.fieldLabel).replace(/\s+/g, '_') || f.fieldLabel,
+        fieldLabel: f.fieldLabel,
+        placeholder: f.placeholder,
       })),
       docsPayload,
       llmConfig,
@@ -341,7 +336,7 @@ async function handleManualFieldFetch(payload: ManualFieldFetchPayload): Promise
         confidence: m.confidence ?? ('medium' as const),
       }))
 
-    await storeFormKVCache(signature, results.map(manualResultToMapping), docsPayload, labels)
+    await storeFormKVCache(signature, results.map(manualResultToMapping), docsPayload, fieldHints.map(f => f.placeholder ? `${f.fieldLabel} [format: ${f.placeholder}]` : f.fieldLabel))
     if (results.length > 0) return { results }
     return { results: [], reason: 'LLM found no values for the requested fields.' }
   } catch (err) {
@@ -405,7 +400,8 @@ chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
           sendResponse({ ok: false, fields: [], reason: 'Cannot scan browser internal pages. Navigate to a web form first.' })
           return
         }
-        await reloadAndWait(tab.id)
+        // Brief settle delay so SPA frameworks (React/Angular) finish rendering inputs
+        await new Promise<void>(resolve => setTimeout(resolve, 400))
         const raw = await sendToTab(tab.id, { type: 'REQUEST_FORM_SCHEMA' })
         const fields = (
           typeof raw === 'object' && raw !== null && Array.isArray((raw as Record<string, unknown>).fields)
@@ -441,6 +437,28 @@ chrome.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
         sendResponse({ ok: true, ...extra })
       } catch (err) {
         sendResponse({ ok: false, reason: err instanceof Error ? err.message : String(err) })
+      }
+    })()
+    return true
+  }
+
+  if (message.type === 'SECTION_FILL_REQUEST') {
+    const tabId = sender.tab?.id
+    if (!tabId) { sendResponse({ ok: false, reason: 'No tab context.' }); return true }
+    void (async () => {
+      try {
+        const output = await handleManualFieldFetch(message.payload)
+        if (!output.results.length) {
+          sendResponse({ ok: false, filled: 0, reason: output.reason })
+          return
+        }
+        const mappings = output.results.map(r => ({ fieldLabel: r.fieldLabel, value: r.value }))
+        const fillResult = await sendToTab(tabId, { type: 'BULK_AUTOFILL', payload: { mappings } }) as { filled?: number } | null
+        sendResponse({ ok: true, filled: fillResult?.filled ?? mappings.length })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('[FormBuddy] SECTION_FILL_REQUEST failed:', msg)
+        sendResponse({ ok: false, filled: 0, reason: msg })
       }
     })()
     return true

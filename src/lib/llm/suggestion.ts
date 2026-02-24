@@ -4,7 +4,7 @@ import type { LLMConfig, Suggestion } from '../../types'
 type SuggestionPayload = Omit<Suggestion, 'id' | 'usedAt' | 'sessionId'>
 
 const SYSTEM_PROMPT = `You are a form-filling assistant.
-Given a field label and one or more source documents, return exactly one best value.
+Given a field label, an optional format hint, and one or more source documents, return exactly one best value.
 Return ONLY valid JSON with this shape:
 {
   "value": "string or null",
@@ -15,6 +15,8 @@ Return ONLY valid JSON with this shape:
 }
 Rules:
 - Read the cleanText of each document and extract the value that best matches the field label.
+- If a "placeholder" is provided, format the output value to exactly match that pattern (e.g. placeholder "DD/MM/YYYY" means output "15/03/1985", not "1985-03-15").
+- If no placeholder is given, output the value as found in the document.
 - If nothing matches, return {"value": null, "sourceFile": "", "sourceText": "", "reason": "not found", "confidence": "low"}.
 - Do not invent values not present in the source text.`
 
@@ -22,11 +24,13 @@ export async function generateSuggestionWithLLM(
   fieldId: string,
   fieldLabel: string,
   documents: Array<{ fileName: string; cleanText: string }>,
-  config: LLMConfig
+  config: LLMConfig,
+  placeholder?: string
 ): Promise<SuggestionPayload | null> {
   const userPrompt = JSON.stringify(
     {
       fieldLabel,
+      ...(placeholder ? { placeholder } : {}),
       documents: documents.map(d => ({
         fileName: d.fileName,
         cleanText: d.cleanText.slice(0, 4000),
