@@ -127,4 +127,4 @@ Issues and pull requests are welcome. Please open an issue first to discuss sign
 
 ## License
 
-[MIT](LICENSE) © 2026 Steepworksai
+[MIT](LICENSE) © 2026 SteepWorksAi
