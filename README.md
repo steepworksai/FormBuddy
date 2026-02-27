@@ -3,7 +3,7 @@
 > Fill any web form instantly from your personal documents — locally, privately, with AI-powered suggestions and full citations.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-6366f1.svg)](LICENSE)
-[![Chrome Web Store](https://img.shields.io/badge/Chrome_Web_Store-v1.0.0-4285F4?logo=googlechrome&logoColor=white)](https://chrome.google.com/webstore/detail/formbuddy)
+[![Chrome Web Store](https://img.shields.io/badge/Chrome_Web_Store-v1.0.0-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/formbuddy/joafgdbpdgmdkfaginjiclnbgipimlmi)
 [![Edge Add-ons](https://img.shields.io/badge/Edge_Add--ons-v1.0.0-0078D7?logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/formbuddy)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-green)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 
@@ -50,7 +50,7 @@ FormBuddy uses your own API key — no FormBuddy subscription or monthly fee.
 
 ### Install from a browser store
 
-[**Add to Chrome →**](https://chrome.google.com/webstore/detail/formbuddy)
+[**Add to Chrome →**](https://chromewebstore.google.com/detail/formbuddy/joafgdbpdgmdkfaginjiclnbgipimlmi)
 [**Add to Microsoft Edge →**](https://microsoftedge.microsoft.com/addons/detail/formbuddy)
 
 ### Run locally from source
