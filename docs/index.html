@@ -9,12 +9,15 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, sans-serif; background: #f9fafb; color: #111827; }
+
+    /* ── Hero ── */
     .hero { max-width: 720px; margin: 0 auto; padding: 80px 24px 60px; text-align: center; }
     .logo-wrap { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 24px; }
     .logo-wrap img { width: 64px; height: 64px; border-radius: 16px; box-shadow: 0 4px 16px rgba(99,102,241,0.25); }
     .logo-wrap span { font-size: 28px; font-weight: 900; color: #1f2937; letter-spacing: -0.5px; }
     .badge { display: inline-block; background: #ede9fe; color: #6366f1; border: 1px solid #c4b5fd; border-radius: 99px; padding: 4px 14px; font-size: 13px; font-weight: 700; margin-bottom: 20px; }
     h1 { font-size: 42px; font-weight: 900; color: #1f2937; line-height: 1.15; margin-bottom: 16px; }
+<<<<<<< Updated upstream
     .sub { font-size: 18px; color: #6b7280; line-height: 1.6; max-width: 540px; margin: 0 auto 36px; }
     .cta-group { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
     .cta { display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; border-radius: 12px; font-weight: 700; font-size: 16px; text-decoration: none; box-shadow: 0 4px 18px rgba(99,102,241,0.35); }
@@ -26,23 +29,63 @@
     .video-wrap { position: relative; padding-bottom: 56.25%; height: 0; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
     .video-wrap iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
     .features { max-width: 720px; margin: 60px auto; padding: 0 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+=======
+    .sub { font-size: 18px; color: #6b7280; line-height: 1.6; max-width: 540px; margin: 0 auto; }
+
+    /* ── Features ── */
+    .features { max-width: 720px; margin: 60px auto 0; padding: 0 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+>>>>>>> Stashed changes
     .feature { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
     .feature h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; color: #1f2937; }
     .feature p { font-size: 13px; color: #6b7280; line-height: 1.55; }
     .icon { font-size: 24px; margin-bottom: 10px; }
+
+    /* ── CTA ── */
+    .cta-section { max-width: 720px; margin: 60px auto; padding: 0 24px; display: flex; justify-content: center; }
+    .cta-group { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+    .cta { display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; border-radius: 12px; font-weight: 700; font-size: 16px; text-decoration: none; box-shadow: 0 4px 18px rgba(99,102,241,0.35); }
+    .cta-edge { background: linear-gradient(135deg, #0078d7, #005a9e); box-shadow: 0 4px 18px rgba(0,120,215,0.35); }
+    .cta-gh { background: linear-gradient(135deg, #1f2937, #374151); box-shadow: 0 4px 18px rgba(0,0,0,0.2); }
+    .cta-contribute { background: transparent; border: 2px solid #6366f1; color: #6366f1; box-shadow: none; }
+
+    /* ── How it works ── */
+    .how { max-width: 720px; margin: 0 auto 60px; padding: 0 24px; text-align: center; }
+    .how h2 { font-size: 26px; font-weight: 800; color: #1f2937; margin-bottom: 32px; }
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+    .step { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px 20px; text-align: left; }
+    .step-num { font-size: 12px; font-weight: 700; color: #6366f1; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px; }
+    .step h3 { font-size: 15px; font-weight: 700; color: #1f2937; margin-bottom: 6px; }
+    .step p { font-size: 13px; color: #6b7280; line-height: 1.55; }
+
+    /* ── Video ── */
+    .video-section { max-width: 720px; margin: 0 auto 60px; padding: 0 24px; }
+    .video-section h2 { font-size: 22px; font-weight: 800; color: #1f2937; margin-bottom: 16px; text-align: center; }
+    .video-wrap { position: relative; padding-bottom: 56.25%; height: 0; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
+    .video-wrap iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
+
+    /* ── Footer ── */
     footer { text-align: center; padding: 32px 24px; font-size: 13px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
     footer a { color: #6366f1; text-decoration: none; }
+
+    @media (max-width: 600px) {
+      h1 { font-size: 28px; }
+      .features { grid-template-columns: 1fr; }
+      .steps { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
+
+  <!-- Hero -->
   <div class="hero">
     <div class="logo-wrap">
       <img src="icon128.png" alt="FormBuddy logo" />
       <span>FormBuddy</span>
     </div>
-    <div class="badge">Chrome & Edge Extension · Free · Open Source</div>
+    <div class="badge">Chrome &amp; Edge Extension · Free · Open Source</div>
     <h1>Fill any form from<br>your own documents</h1>
     <p class="sub">FormBuddy reads your PDFs, passport scans, and tax forms locally — then suggests the right value for every field on any website. Private by design.</p>
+<<<<<<< Updated upstream
     <div class="cta-group">
       <a class="cta" href="https://chromewebstore.google.com/detail/formbuddy/joafgdbpdgmdkfaginjiclnbgipimlmi" target="_blank">
         ➕ Add to Chrome — It's Free
@@ -64,8 +107,11 @@
     <div class="video-wrap">
       <iframe src="https://www.youtube.com/embed/6uGwb3xCwqw" allowfullscreen></iframe>
     </div>
+=======
+>>>>>>> Stashed changes
   </div>
 
+  <!-- Features -->
   <div class="features">
     <div class="feature">
       <div class="icon">📁</div>
@@ -99,11 +145,65 @@
     </div>
   </div>
 
+  <!-- CTAs -->
+  <div class="cta-section">
+    <div class="cta-group">
+      <a class="cta" href="https://chromewebstore.google.com/detail/formbuddy/joafgdbpdgmdkfaginjiclnbgipimlmi" target="_blank">
+        ➕ Add to Chrome — It's Free
+      </a>
+      <a class="cta cta-edge" href="https://microsoftedge.microsoft.com/addons/detail/formbuddy/kfccebdbkhoajcjlmhehnpigdijdoaak" target="_blank">
+        ➕ Add to Edge — It's Free
+      </a>
+      <a class="cta cta-gh" href="https://github.com/steepworksai/FormBuddy" target="_blank">
+        ⭐ Star on GitHub
+      </a>
+      <a class="cta cta-contribute" href="https://github.com/steepworksai/FormBuddy" target="_blank">
+        🤝 Contribute
+      </a>
+    </div>
+  </div>
+
+  <!-- How it works -->
+  <div class="how">
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">Step 1</div>
+        <h3>Load your documents</h3>
+        <p>Point FormBuddy at a local folder. PDFs, scans, and notes are indexed on your device — nothing leaves the browser.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">Step 2</div>
+        <h3>Open any web form</h3>
+        <p>Navigate to any form you need to fill — job applications, visa forms, insurance — FormBuddy works on any site.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">Step 3</div>
+        <h3>Scan &amp; Auto Fill</h3>
+        <p>Click the FormBuddy icon and hit Scan &amp; Auto Fill. Every field is detected and filled at once from your documents.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">Step 4</div>
+        <h3>Review &amp; submit</h3>
+        <p>Every suggestion shows the exact file and page it came from. Edit anything, then submit with confidence.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Video -->
+  <div class="video-section">
+    <h2>See it in action</h2>
+    <div class="video-wrap">
+      <iframe src="https://www.youtube.com/embed/6uGwb3xCwqw" allowfullscreen></iframe>
+    </div>
+  </div>
+
   <footer>
     © 2026 SteepWorksAi ·
     <a href="https://github.com/steepworksai/FormBuddy" target="_blank">GitHub</a> ·
     <a href="privacy.html">Privacy Policy</a> ·
     <a href="https://github.com/steepworksai/FormBuddy/issues" target="_blank">Support</a>
   </footer>
+
 </body>
 </html>
